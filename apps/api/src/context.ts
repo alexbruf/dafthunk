@@ -76,6 +76,8 @@ export interface Bindings {
   REPLICATE_API_TOKEN?: string;
   GOOGLE_API_KEY?: string;
   TAVILY_API_KEY?: string;
+  COMPOSIO_API_KEY?: string;
+  COMPOSIO_WEBHOOK_SECRET?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
   R2_BUCKET_NAME?: string;

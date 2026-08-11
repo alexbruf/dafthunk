@@ -13,6 +13,9 @@ import billingRoutes from "./routes/billing";
 import botRoutes from "./routes/bots";
 import cloudflareAiRoutes from "./routes/cloudflare-ai";
 import cloudflareGatewayRoutes from "./routes/cloudflare-gateway";
+import composioRoutes from "./routes/composio";
+import composioConnect from "./routes/composio-connect";
+import composioWebhook from "./routes/composio-webhook";
 import dashboardRoutes from "./routes/dashboard";
 import databaseRoutes from "./routes/databases";
 import datasetRoutes from "./routes/datasets";
@@ -102,6 +105,15 @@ app.route("/whatsapp", whatsappWebhook);
 
 // Slack webhook (no auth, verified by HMAC-SHA256 signature)
 app.route("/slack", slackWebhook);
+
+// Composio trigger deliveries (no auth, verified by HMAC-SHA256 signature)
+app.route("/composio", composioWebhook);
+
+// Composio connection flow (hosted auth link + callback)
+app.route("/composio", composioConnect);
+
+// Composio catalog browsing for the editor
+app.route("/composio", composioRoutes);
 
 // Trigger execution (API key auth, org derived from resource record)
 app.route("/http", httpTriggerRoutes);

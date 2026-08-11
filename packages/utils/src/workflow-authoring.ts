@@ -26,6 +26,7 @@ const TRIGGER_TO_NODE_TYPES: Record<WorkflowTrigger, string[]> = {
   telegram_event: ["receive-telegram-message"],
   whatsapp_event: ["receive-whatsapp-message"],
   slack_event: ["receive-slack-message"],
+  composio_event: ["receive-composio-event"],
 };
 
 export { TRIGGER_TO_NODE_TYPES };

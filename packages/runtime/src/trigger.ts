@@ -1,4 +1,5 @@
 import type {
+  ComposioEvent,
   DiscordInteraction,
   QueueMessage,
   ScheduledTrigger,
@@ -81,6 +82,8 @@ export interface TriggerContext {
   /** Incoming Slack message (for slack-triggered workflows) */
   slackMessage?: SlackMessage;
   slackBotToken?: string;
+  /** Incoming Composio trigger delivery (for composio-triggered workflows) */
+  composioEvent?: ComposioEvent;
 }
 
 /**
@@ -106,5 +109,6 @@ export function extractTrigger(source: TriggerContext): TriggerContext {
     whatsappPhoneNumberId: source.whatsappPhoneNumberId,
     slackMessage: source.slackMessage,
     slackBotToken: source.slackBotToken,
+    composioEvent: source.composioEvent,
   };
 }
