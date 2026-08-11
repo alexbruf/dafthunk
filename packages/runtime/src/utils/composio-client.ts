@@ -257,7 +257,11 @@ export class ComposioClient {
   constructor(options: ComposioClientOptions) {
     this.apiKey = options.apiKey;
     this.baseUrl = options.baseUrl ?? COMPOSIO_API_BASE;
-    this.fetchImpl = options.fetch ?? globalThis.fetch;
+    // Bound to globalThis on purpose. Stored as a property and called as
+    // `this.fetchImpl(...)`, an unbound `fetch` is invoked with `this` set to
+    // this client, which workerd rejects with "Illegal invocation" while Node
+    // and bun tolerate it — so it fails only once deployed.
+    this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.retries = options.retries ?? 1;
   }
 

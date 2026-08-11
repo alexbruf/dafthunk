@@ -532,6 +532,262 @@
       "triggers": {
         "crons": ["* * * * *"]
       }
+    },
+    // Demo/dev deployment on a separate Cloudflare account, used to prove the
+    // Composio webhook path against a stable public URL. Composio SSRF-checks
+    // the webhook URL at registration, so the subscription can only be created
+    // after this is live.
+    //
+    // Two features are off here and the nodes that need them will not run:
+    // containers (deploy with --containers-rollout=none; no Docker in CI) and
+    // AI Search (this account's token has no permission for it).
+    "clanqi": {
+      "name": "dafthunk-clanqi",
+      "routes": [{ "pattern": "daft.clanqi.org", "custom_domain": true }],
+      "compatibility_date": "2024-10-22",
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1
+      },
+      "workflows": [
+        {
+          "name": "dafthunk-clanqi",
+          "binding": "EXECUTE",
+          "class_name": "Runtime"
+        }
+      ],
+      "browser": {
+        "binding": "BROWSER"
+      },
+      "ai": {
+        "binding": "AI"
+      },
+      // AI Search (formerly AutoRAG) namespace binding. Dataset search resolves
+      // instances by name (DATASETS_AUTORAG) within this namespace at runtime.
+      "containers": [
+        {
+          "class_name": "FFmpegContainer",
+          "image": "./containers/ffmpeg/Dockerfile",
+          "max_instances": 5,
+          "instance_type": "standard-1"
+        },
+        {
+          "class_name": "Sandbox",
+          "image": "./containers/duckdb/Dockerfile",
+          "max_instances": 5,
+          "instance_type": "standard-1"
+        },
+        {
+          "class_name": "LanguageSandbox",
+          "image": "./Dockerfile",
+          "max_instances": 5,
+          "instance_type": "standard-1"
+        }
+      ],
+      "worker_loaders": [{ "binding": "LOADER" }],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "dafthunk-clanqi",
+          "database_id": "93bc366a-f94b-463c-823b-2061e9a29e16",
+          "preview_database_id": "93bc366a-f94b-463c-823b-2061e9a29e16",
+          "migrations_dir": "./src/db/migrations"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "KV",
+          "id": "6a022d0415844aa384b43f0824af7ae5"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "RESSOURCES",
+          "bucket_name": "dafthunk-clanqi-resources"
+        },
+        {
+          "binding": "DATASETS",
+          "bucket_name": "dafthunk-clanqi-datasets"
+        },
+        {
+          "binding": "INBOXES",
+          "bucket_name": "dafthunk-clanqi-inboxes"
+        }
+      ],
+      "analytics_engine_datasets": [
+        {
+          "binding": "EXECUTIONS",
+          "dataset": "dafthunk_executions_production"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "SEND_EMAIL"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "DATABASE",
+            "class_name": "DatabaseDO",
+            "script_name": "dafthunk-clanqi"
+          },
+          {
+            "name": "AGENT_RUNNER",
+            "class_name": "AgentRunner",
+            "script_name": "dafthunk-clanqi"
+          },
+          {
+            "name": "WORKFLOW_AGENT",
+            "class_name": "WorkflowAgent",
+            "script_name": "dafthunk-clanqi"
+          },
+          {
+            "name": "FFMPEG_CONTAINER",
+            "class_name": "FFmpegContainer"
+          },
+          {
+            "name": "DUCKDB_SANDBOX",
+            "class_name": "Sandbox"
+          },
+          {
+            "name": "SANDBOX",
+            "class_name": "LanguageSandbox"
+          },
+          {
+            "name": "MAILBOX",
+            "class_name": "MailboxDO",
+            "script_name": "dafthunk-clanqi"
+          },
+          {
+            "name": "EMAIL_AGENT_RUNNER",
+            "class_name": "EmailAgentRunner",
+            "script_name": "dafthunk-clanqi"
+          },
+          {
+            "name": "WORKFLOW_GENERATOR_AGENT",
+            "class_name": "WorkflowGeneratorAgent",
+            "script_name": "dafthunk-clanqi"
+          }
+        ]
+      },
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_classes": ["WorkflowSession"]
+        },
+        {
+          "tag": "v2",
+          "new_sqlite_classes": ["DatabaseDO"]
+        },
+        {
+          "tag": "v3",
+          "new_sqlite_classes": ["AgentRunner"]
+        },
+        {
+          "tag": "v4",
+          "new_sqlite_classes": ["FFmpegContainer"]
+        },
+        {
+          "tag": "v5",
+          "new_sqlite_classes": ["DiscordBot"]
+        },
+        {
+          "tag": "v6",
+          "deleted_classes": ["DiscordBot"]
+        },
+        {
+          "tag": "v7",
+          "new_sqlite_classes": ["Sandbox"]
+        },
+        {
+          "tag": "v8"
+        },
+        {
+          "tag": "v9",
+          "deleted_classes": ["WorkflowSession"]
+        },
+        {
+          "tag": "v10",
+          "new_sqlite_classes": ["WorkflowAgent"]
+        },
+        {
+          "tag": "v11",
+          "new_sqlite_classes": ["LanguageSandbox"]
+        },
+        {
+          "tag": "v12",
+          "new_sqlite_classes": ["MailboxDO"]
+        },
+        {
+          "tag": "v13",
+          "new_sqlite_classes": ["EmailAgentRunner"]
+        },
+        {
+          "tag": "v14",
+          "new_sqlite_classes": ["WorkflowGeneratorAgent"]
+        }
+      ],
+      "unsafe": {
+        "bindings": [
+          {
+            "name": "RATE_LIMIT_DEFAULT",
+            "type": "ratelimit",
+            "namespace_id": "1001",
+            "simple": {
+              "limit": 500,
+              "period": 60
+            }
+          },
+          {
+            "name": "RATE_LIMIT_AUTH",
+            "type": "ratelimit",
+            "namespace_id": "1002",
+            "simple": {
+              "limit": 10,
+              "period": 60
+            }
+          },
+          {
+            "name": "RATE_LIMIT_EXECUTE",
+            "type": "ratelimit",
+            "namespace_id": "1003",
+            "simple": {
+              "limit": 30,
+              "period": 60
+            }
+          }
+        ]
+      },
+      "vars": {
+        "WEB_HOST": "https://app.daft.clanqi.org",
+        "WEBSITE_URL": "https://daft.clanqi.org",
+        "EMAIL_DOMAIN": "mail.dafthunk.com",
+        "SEND_EMAIL_FROM": "noreply@mail.dafthunk.com",
+        "SUPPORT_EMAIL_HANDLE": "bertil",
+        "SUPPORT_EMAIL_FROM": "bertil@dafthunk.com",
+        // Placeholder for the future AutoRAG instance over the INBOXES bucket;
+        // wire it up via the Cloudflare dashboard, then set this to the name.
+        "INBOXES_AUTORAG": ""
+      },
+      "queues": {
+        "producers": [
+          {
+            "binding": "WORKFLOW_QUEUE",
+            "queue": "dafthunk-workflow-queue"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "dafthunk-workflow-queue",
+            "max_batch_size": 10,
+            "max_batch_timeout": 30
+          }
+        ]
+      },
+      "triggers": {
+        "crons": ["* * * * *"]
+      }
     }
   }
   /**

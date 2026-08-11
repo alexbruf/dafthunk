@@ -487,3 +487,46 @@ describe("ComposioClient connections", () => {
     expect(err.status).toBe(404);
   });
 });
+
+describe("ComposioClient default fetch binding", () => {
+  /**
+   * The client keeps its fetch implementation as a property and calls it as
+   * `this.fetchImpl(...)`, which invokes the function with `this` set to the
+   * client. workerd rejects that with "Illegal invocation" while Node and bun
+   * tolerate it, so an unbound default fetch fails ONLY once deployed — it
+   * broke catalog synthesis, the action node, the connect flow and the
+   * reconciler simultaneously, and no fixture test noticed because they all
+   * inject their own fetch.
+   *
+   * Asserting on the receiver rather than on a runtime's error message makes
+   * this deterministic: the workerd test pool installs a fetch that is not
+   * `this`-sensitive, so reproducing the symptom there is not possible.
+   */
+  it("calls the global fetch with globalThis as its receiver", async () => {
+    const original = globalThis.fetch;
+    const receivers: unknown[] = [];
+    globalThis.fetch = function (this: unknown) {
+      receivers.push(this);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ items: [], next_cursor: null, total_pages: 0 }),
+          { status: 200 }
+        )
+      );
+    } as unknown as typeof fetch;
+
+    try {
+      // Constructed after the stub is installed: the binding is captured here.
+      const client = new ComposioClient({ apiKey: "ak_test" });
+      await client.listTools({ toolkitSlug: "github" });
+    } finally {
+      globalThis.fetch = original;
+    }
+
+    expect(receivers).toHaveLength(1);
+    expect(receivers[0] === globalThis || receivers[0] === undefined).toBe(
+      true
+    );
+    expect(receivers[0]).not.toBeInstanceOf(ComposioClient);
+  });
+});
