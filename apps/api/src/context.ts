@@ -111,6 +111,8 @@ export interface Variables {
   jwtPayload?: JWTTokenPayload;
   // Organization ID for the current request context
   organizationId?: string;
+  // Resolved user id (from accessIdentityMiddleware on /mcp, or jwtMiddleware elsewhere)
+  userId?: string;
 }
 
 // Type for Hono app context combining Env and Variables
