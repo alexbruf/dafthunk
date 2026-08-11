@@ -278,7 +278,11 @@ export function IntegrationDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      {/* The Composio branch adds a provider blurb, a search box and a list of
+          ~1,000 toolkits, which together outgrow the viewport. shadcn's
+          DialogContent sets no height bound, so without this the dialog runs
+          off the screen instead of scrolling. */}
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add Integration</DialogTitle>
           {content}

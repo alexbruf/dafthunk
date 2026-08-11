@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildComposioCallbackUrl,
   ComposioConnectError,
   type ComposioConnectedAccount,
   type ComposioConnectState,
@@ -379,5 +380,59 @@ describe("requireComposioApiKey", () => {
     expect(() => requireComposioApiKey({ COMPOSIO_API_KEY: "" })).toThrow(
       expect.objectContaining({ redirectError: "composio_not_configured" })
     );
+  });
+});
+
+describe("buildComposioCallbackUrl", () => {
+  /**
+   * The callback host used to be a hardcoded pair — api.dafthunk.com in
+   * production, localhost otherwise — so every self-hosted deployment sent
+   * users to localhost after consenting. The connection succeeded upstream and
+   * the callback never ran, leaving a live Composio account with no integration
+   * row pointing at it.
+   *
+   * Deriving it from the request is what makes this correct anywhere: it is by
+   * definition the host the browser just reached us on. Composio accepts
+   * `callback_url` per request, so nothing has to be registered in advance.
+   */
+  it("uses the origin the request actually arrived on", () => {
+    expect(
+      buildComposioCallbackUrl(
+        "https://daft.clanqi.org/composio/connect?toolkit=notion",
+        "st8"
+      )
+    ).toBe("https://daft.clanqi.org/composio/callback?state=st8");
+  });
+
+  it("works unchanged for local development", () => {
+    expect(
+      buildComposioCallbackUrl("http://localhost:3002/composio/connect", "st8")
+    ).toBe("http://localhost:3002/composio/callback?state=st8");
+  });
+
+  it("keeps a non-default port", () => {
+    expect(
+      buildComposioCallbackUrl(
+        "https://example.test:8787/composio/connect",
+        "s"
+      )
+    ).toBe("https://example.test:8787/composio/callback?state=s");
+  });
+
+  it("url-encodes the state so its base64 padding survives", () => {
+    // Signed state contains '+', '/' and '=' — unencoded they would be
+    // mangled into a different value by the time the callback parses it.
+    const state = "abc+def/ghi==.sig+/=";
+    const url = new URL(buildComposioCallbackUrl("https://x.test/c", state));
+    expect(url.searchParams.get("state")).toBe(state);
+  });
+
+  it("ignores any query already on the incoming request", () => {
+    expect(
+      buildComposioCallbackUrl(
+        "https://daft.clanqi.org/composio/connect?toolkit=notion&x=1",
+        "s"
+      )
+    ).toBe("https://daft.clanqi.org/composio/callback?state=s");
   });
 });

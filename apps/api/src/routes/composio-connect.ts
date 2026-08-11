@@ -420,12 +420,26 @@ const resolveOrgFromQuery = async (
   await next();
 };
 
-function callbackUrl(env: Bindings, state: string): string {
-  const base =
-    env.CLOUDFLARE_ENV === "production"
-      ? "https://api.dafthunk.com"
-      : "http://localhost:3002";
-  return `${base}/composio/callback?state=${encodeURIComponent(state)}`;
+/**
+ * The address Composio should send the user back to.
+ *
+ * Derived from the request rather than configured: it is by definition the host
+ * the browser just reached us on, which is right in local development, in
+ * production, and in any self-hosted deployment. This was previously a
+ * hardcoded pair of hosts, so every deployment that was neither dafthunk.com
+ * nor localhost sent users to localhost after consenting — the connection
+ * succeeded upstream and the callback never ran, leaving a live Composio
+ * account with no integration row pointing at it.
+ *
+ * Composio accepts `callback_url` per request, so nothing needs registering in
+ * advance for this to work on a new host.
+ */
+export function buildComposioCallbackUrl(
+  requestUrl: string,
+  state: string
+): string {
+  const origin = new URL(requestUrl).origin;
+  return `${origin}/composio/callback?state=${encodeURIComponent(state)}`;
 }
 
 function appRedirect(
@@ -526,7 +540,7 @@ composioConnect.get(
         // Composio's user is Dafthunk's organization: connections, and the
         // trigger instances built on them, stay inside one tenant.
         userId: organizationId,
-        callbackUrl: callbackUrl(c.env, state),
+        callbackUrl: buildComposioCallbackUrl(c.req.url, state),
       });
 
       return c.redirect(link.redirectUrl);
