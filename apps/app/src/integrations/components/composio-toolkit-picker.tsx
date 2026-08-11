@@ -60,7 +60,7 @@ export function ComposioToolkitPicker({
         onChange={(event) => setSearch(event.target.value)}
       />
 
-      <ScrollArea className="h-64 rounded-md border">
+      <ScrollArea className="h-72 rounded-md border">
         {isLoading ? (
           <p className="p-3 text-sm text-muted-foreground">Loading apps...</p>
         ) : visible.length === 0 ? (
@@ -75,7 +75,7 @@ export function ComposioToolkitPicker({
                   type="button"
                   onClick={() => onSelect(toolkit.slug)}
                   className={cn(
-                    "flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
+                    "flex w-full items-start gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
                     selectedSlug === toolkit.slug && "bg-accent"
                   )}
                 >
@@ -91,7 +91,12 @@ export function ComposioToolkitPicker({
                   <span className="min-w-0 flex-1">
                     <span className="block font-medium">{toolkit.name}</span>
                     {toolkit.description && (
-                      <span className="block truncate text-xs text-muted-foreground">
+                      // Wrapped and clamped rather than truncated to one line:
+                      // these descriptions are a sentence or two, and a single
+                      // ellipsed line hid which app a row was for. Two lines
+                      // keeps every row the same height, so the list stays
+                      // scannable instead of turning into a long scroll.
+                      <span className="mt-0.5 block line-clamp-2 whitespace-normal text-xs leading-snug text-muted-foreground">
                         {toolkit.description}
                       </span>
                     )}
