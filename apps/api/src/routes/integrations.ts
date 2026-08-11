@@ -84,6 +84,11 @@ integrationRoutes.get("/providers", async (c) => {
   ) {
     availableProviders.push("wordpress");
   }
+  // Composio is gated on one project key rather than a client id/secret pair:
+  // it brokers auth for its toolkits, so Dafthunk holds no credentials of its own.
+  if (env.COMPOSIO_API_KEY) {
+    availableProviders.push("composio");
+  }
 
   return c.json({ providers: availableProviders });
 });

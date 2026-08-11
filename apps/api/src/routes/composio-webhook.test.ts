@@ -5,6 +5,7 @@ import composioWebhook, {
   type ComposioTriggerCandidate,
   claimDelivery,
   dispatchTargets,
+  parseAccountExpiredEvent,
   parseComposioEvent,
   selectTriggerTargets,
 } from "./composio-webhook";
@@ -436,5 +437,57 @@ describe("dispatchTargets", () => {
         throw new Error("boom");
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("parseAccountExpiredEvent", () => {
+  const expiredEnvelope = (data: Record<string, unknown>) => ({
+    id: "evt_expired_1",
+    type: "composio.connected_account.expired",
+    timestamp: "2026-08-11T00:00:00.000Z",
+    metadata: {},
+    data,
+  });
+
+  it("reads the org and account from a real expiry delivery", () => {
+    // `data` mirrors GET /connected_accounts/{id}; Dafthunk sets Composio's
+    // user_id to the organization id when creating the connection.
+    expect(
+      parseAccountExpiredEvent(
+        expiredEnvelope({
+          id: "ca_abc123",
+          user_id: "org_42",
+          status: "EXPIRED",
+          toolkit: { slug: "gmail" },
+        })
+      )
+    ).toEqual({ organizationId: "org_42", connectedAccountId: "ca_abc123" });
+  });
+
+  it("returns null when the account id is missing", () => {
+    expect(
+      parseAccountExpiredEvent(expiredEnvelope({ user_id: "org_42" }))
+    ).toBeNull();
+  });
+
+  it("returns null when the org is missing", () => {
+    // Without an org there is nothing to scope the update to, and guessing
+    // would risk expiring another tenant's connection.
+    expect(
+      parseAccountExpiredEvent(expiredEnvelope({ id: "ca_abc123" }))
+    ).toBeNull();
+  });
+
+  it("returns null for an empty-string org", () => {
+    expect(
+      parseAccountExpiredEvent(
+        expiredEnvelope({ id: "ca_abc123", user_id: "" })
+      )
+    ).toBeNull();
+  });
+
+  it("returns null when there is no data object at all", () => {
+    expect(parseAccountExpiredEvent({ id: "evt", type: "x" })).toBeNull();
+    expect(parseAccountExpiredEvent(null)).toBeNull();
   });
 });

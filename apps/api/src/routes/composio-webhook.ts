@@ -1,6 +1,9 @@
 import { verifyComposioRequest } from "@dafthunk/runtime/utils/composio-signature";
 import type { ComposioEvent, Workflow, WorkflowTrigger } from "@dafthunk/types";
-import { COMPOSIO_EVENT_TRIGGER_MESSAGE } from "@dafthunk/types";
+import {
+  COMPOSIO_EVENT_ACCOUNT_EXPIRED,
+  COMPOSIO_EVENT_TRIGGER_MESSAGE,
+} from "@dafthunk/types";
 import { Hono } from "hono";
 
 import type { ApiContext } from "../context";
@@ -14,6 +17,7 @@ import { getAgentByName } from "../durable-objects/agent-utils";
 import { createWorkerRuntime } from "../runtime/cloudflare-worker-runtime";
 import { WorkflowStore } from "../stores/workflow-store";
 import { isCreditExhausted } from "../utils/credits";
+import { markComposioAccountExpired } from "./composio-connect";
 
 /**
  * Composio trigger deliveries.
@@ -119,6 +123,34 @@ function pickString(
  * de-duplicates, the second dispatches, the third routes. The rest are
  * best-effort because they are display data for the trigger node.
  */
+/**
+ * Reads a `composio.connected_account.expired` delivery.
+ *
+ * The account object sits on `data` and matches `GET /connected_accounts/{id}`,
+ * so the org is `data.user_id` — Dafthunk sets Composio's user id to the
+ * organization id when it creates the connection. Pure so it can be tested
+ * without a request, like the trigger parser below.
+ */
+export function parseAccountExpiredEvent(
+  body: unknown
+): { organizationId: string; connectedAccountId: string } | null {
+  const data = asRecord(asRecord(body)?.data);
+  if (!data) return null;
+
+  const connectedAccountId = data.id;
+  const organizationId = data.user_id;
+  if (
+    typeof connectedAccountId !== "string" ||
+    connectedAccountId.length === 0
+  ) {
+    return null;
+  }
+  if (typeof organizationId !== "string" || organizationId.length === 0) {
+    return null;
+  }
+  return { organizationId, connectedAccountId };
+}
+
 export function parseComposioEvent(body: unknown): ComposioEvent | null {
   const envelope = asRecord(body);
   if (!envelope) return null;
@@ -284,10 +316,34 @@ composioWebhook.post("/webhook", async (c) => {
     return c.json({ error: "Not a Composio event" }, 400);
   }
 
+  if (envelopeType === COMPOSIO_EVENT_ACCOUNT_EXPIRED) {
+    // Composio noticed the upstream credential died before we tried to use it.
+    // Recording that turns the next failed run into a visible "reconnect this"
+    // in the integrations list instead of a confusing mid-workflow error.
+    const expiry = parseAccountExpiredEvent(body);
+    if (!expiry) {
+      console.error("[ComposioWebhook] Unroutable account-expiry delivery");
+      return c.json({ ok: true, ignored: envelopeType });
+    }
+    const env = c.env;
+    c.executionCtx.waitUntil(
+      markComposioAccountExpired(
+        env,
+        expiry.organizationId,
+        expiry.connectedAccountId
+      ).catch((error: unknown) => {
+        console.error(
+          "[ComposioWebhook] Failed to mark connection expired:",
+          error instanceof Error ? error.message : String(error)
+        );
+      })
+    );
+    return c.json({ ok: true, handled: envelopeType });
+  }
+
   if (envelopeType !== COMPOSIO_EVENT_TRIGGER_MESSAGE) {
-    // A subscription may deliver other composio.* events (connected account
-    // expiry, for one). Acknowledging stops Composio retrying something no
-    // workflow will ever act on.
+    // A subscription may deliver other composio.* events. Acknowledging stops
+    // Composio retrying something no workflow will ever act on.
     return c.json({ ok: true, ignored: envelopeType });
   }
 
