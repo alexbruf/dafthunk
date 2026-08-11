@@ -29,6 +29,7 @@ import httpTriggerRoutes from "./routes/http-triggers";
 import integrationRoutes from "./routes/integrations";
 import invitationRoutes from "./routes/invitations";
 import llmsRoutes from "./routes/llms";
+import mcpRoutes from "./routes/mcp";
 import oauthRoutes from "./routes/oauth";
 import objectRoutes from "./routes/objects";
 import organizationRoutes from "./routes/organizations";
@@ -120,6 +121,10 @@ app.route("/form-triggers", formTriggerRoutes);
 app.route("/feedback-forms", feedbackFormRoutes);
 app.route("/templates", templateRoutes);
 app.route("/types", typeRoutes);
+
+// MCP server (Streamable HTTP). Auth attaches inside routes/mcp.ts via
+// accessIdentityMiddleware (see the AUTH MOUNT POINT note there).
+app.route("/mcp", mcpRoutes);
 
 app.route("/:organizationId/api-keys", apiKeyRoutes);
 app.route("/:organizationId/billing", billingRoutes);
