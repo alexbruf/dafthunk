@@ -19,7 +19,7 @@ import {
   Controls,
   ReactFlow,
 } from "@xyflow/react";
-import { PanelRightClose, PanelRightOpen, Plus } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, Plus, Search } from "lucide-react";
 import ClipboardPaste from "lucide-react/icons/clipboard-paste";
 import Clock from "lucide-react/icons/clock";
 import Copy from "lucide-react/icons/copy";
@@ -152,6 +152,8 @@ export interface WorkflowCanvasProps {
     >
   ) => void;
   onAddNode?: () => void;
+  /** Opens the Composio catalog search dialog (an action picker beyond the palette). */
+  onSearchComposio?: () => void;
   /** Run / cancel / reset. Also invoked by the Cmd+Enter shortcut. */
   onAction?: () => void;
   workflowStatus?: WorkflowExecutionStatus;
@@ -418,6 +420,29 @@ function AddNodeButton({
   );
 }
 
+function SearchComposioButton({
+  onClick,
+  disabled,
+}: {
+  onClick: (e: React.MouseEvent) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <ActionBarButton
+      onClick={onClick}
+      disabled={disabled}
+      tooltip="Search 45,000+ Composio tools and triggers"
+      className={cn(
+        actionBarButtonOutlineClassName,
+        "size-10 p-0! text-purple-500 hover:text-purple-600 dark:text-purple-400 dark:hover:text-purple-300"
+      )}
+      tooltipSide="right"
+    >
+      <Search className="size-5!" />
+    </ActionBarButton>
+  );
+}
+
 export function SetScheduleButton({
   onClick,
   disabled,
@@ -557,6 +582,7 @@ export function WorkflowCanvas({
   onNodeDragStop,
   onInit,
   onAddNode,
+  onSearchComposio,
   onAction,
   workflowStatus = "idle",
   workflowErrorMessage,
@@ -692,6 +718,12 @@ export function WorkflowCanvas({
             <ActionBarGroup vertical>
               {onAddNode && (
                 <AddNodeButton onClick={onAddNode} disabled={disabled} />
+              )}
+              {onSearchComposio && (
+                <SearchComposioButton
+                  onClick={onSearchComposio}
+                  disabled={disabled}
+                />
               )}
             </ActionBarGroup>
 
