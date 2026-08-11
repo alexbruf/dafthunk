@@ -1,11 +1,17 @@
-import type { Workflow, WorkflowExecution } from "@dafthunk/types";
+import type {
+  GeneratorServerMessage,
+  Workflow,
+  WorkflowExecution,
+} from "@dafthunk/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Bindings } from "../../context";
 import { stampOnboardingStage } from "../../db";
+import { FIXTURE_NODE_TYPES } from "./fixtures";
 import {
   callModel,
   checkGeneratorPreconditions,
+  generateWorkflow,
   runOnce,
   saveWorkflow,
 } from "./generator-service";
@@ -32,10 +38,14 @@ const state = vi.hoisted(() => ({
     if (!next) throw new Error("callLLM called more times than expected");
     return next;
   }),
-  save: vi.fn(async (record: unknown) => record),
-  execute: vi.fn(async (_options: unknown) => ({
-    execution: state.execution(),
-  })),
+  save: vi.fn(async (record: unknown) => {
+    state.saved.push(record);
+    return record;
+  }),
+  execute: vi.fn(async (options: unknown) => {
+    state.runCalls.push(options);
+    return { execution: state.execution() };
+  }),
   execution: () =>
     ({
       id: "exec-1",
@@ -164,6 +174,53 @@ beforeEach(() => {
   state.save.mockClear();
   state.execute.mockClear();
 });
+
+/** The canned draft pair from `pipeline.test.ts`, so reviewers recognise it. */
+const BROKEN_DRAFT = {
+  title: "Echo",
+  description: "Echoes a value",
+  trigger: "manual",
+  steps: ["Read a JSON value", "Show it"],
+  nodes: [
+    { id: "src", type: "json-input", inputs: { value: { a: 1 } } },
+    { id: "sink", type: "output-text" },
+  ],
+  edges: [
+    {
+      source: "src",
+      sourceOutput: "value",
+      target: "sink",
+      targetInput: "value",
+    },
+  ],
+};
+
+const FIXED_DRAFT = {
+  ...BROKEN_DRAFT,
+  nodes: [...BROKEN_DRAFT.nodes, { id: "conv", type: "to-string" }],
+  edges: [
+    {
+      source: "src",
+      sourceOutput: "value",
+      target: "conv",
+      targetInput: "value",
+    },
+    {
+      source: "conv",
+      sourceOutput: "result",
+      target: "sink",
+      targetInput: "value",
+    },
+  ],
+};
+
+function llmResult(payload: unknown): GenerateResultShape {
+  return {
+    content: JSON.stringify(payload),
+    inputTokens: 100,
+    outputTokens: 50,
+  };
+}
 
 // ── Step 1: unit coverage for the lifted free functions ──────────────────
 //
@@ -408,5 +465,231 @@ describe("checkGeneratorPreconditions", () => {
     if (result.ok) {
       expect(result.connectedProviders).toEqual(new Set(["slack", "github"]));
     }
+  });
+});
+
+// ── Step 3: generateWorkflow orchestration ───────────────────────────────
+//
+// `serviceHarness` mirrors the `harness(responses, overrides)` shape from
+// `pipeline.test.ts`: canned model responses are shifted off a queue, the save
+// and run deps are spy fns a reviewer already recognises, and the emitted
+// frames are collected for ordering assertions. The service walks the same
+// pipeline, so only the seams move.
+
+interface ServiceHarnessOverrides {
+  billingInfo?: unknown;
+  integrations?: Array<{ provider: string }>;
+  creditExhausted?: boolean;
+  runStatus?: WorkflowExecution["status"];
+  execute?: boolean;
+  env?: Record<string, unknown>;
+  prompt?: string;
+}
+
+async function serviceHarness(
+  responses: GenerateResultShape[],
+  overrides: ServiceHarnessOverrides = {}
+) {
+  state.billingInfo =
+    "billingInfo" in overrides ? overrides.billingInfo : billingRow();
+  state.integrations = overrides.integrations ?? [];
+  state.creditExhausted = overrides.creditExhausted ?? false;
+  state.llmQueue = [...responses];
+  state.runStatus = overrides.runStatus ?? "completed";
+  state.nodeTypes = FIXTURE_NODE_TYPES;
+
+  const ctx = {
+    env: makeEnv(overrides.env),
+    organizationId: "org-1",
+    userId: "user-1",
+  };
+  const forwarded: GeneratorServerMessage[] = [];
+
+  const result = await generateWorkflow(
+    ctx,
+    overrides.prompt ?? "echo a json value as text",
+    {
+      execute: overrides.execute ?? false,
+      onFrame: (frame) => {
+        forwarded.push(frame);
+      },
+    }
+  );
+
+  return {
+    result,
+    frames: result.frames,
+    forwarded,
+    saved: state.saved,
+    callLLM: state.callLLM,
+    save: state.save,
+    run: state.execute,
+    runCalls: state.runCalls,
+  };
+}
+
+const phases = (frames: GeneratorServerMessage[]) =>
+  frames.filter((f) => f.type === "phase").map((f) => f.phase);
+
+describe("generateWorkflow", () => {
+  it("returns outcome ok, a workflowId and repairAttempts 1", async () => {
+    const { result, save, run } = await serviceHarness(
+      [llmResult(BROKEN_DRAFT), llmResult(FIXED_DRAFT)],
+      { execute: true }
+    );
+
+    expect(result.outcome).toBe("ok");
+    expect(result.workflowId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
+    expect(result.repairAttempts).toBe(1);
+    expect(result.issues).toEqual([]);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(result.frames.find((f) => f.type === "done")).toMatchObject({
+      outcome: "ok",
+      workflowId: result.workflowId,
+      executionId: "exec-1",
+    });
+    // The full generate/repair/save/run phase order, matching the pipeline.
+    expect(phases(result.frames)).toEqual([
+      "selecting",
+      "planning",
+      "generating",
+      "validating",
+      "repairing",
+      "saving",
+      "running",
+      "complete",
+    ]);
+  });
+
+  it("collects frames in order and forwards each to onFrame", async () => {
+    const { result, forwarded } = await serviceHarness(
+      [llmResult(FIXED_DRAFT)],
+      { execute: true }
+    );
+
+    expect(result.frames.length).toBeGreaterThan(0);
+    expect(forwarded).toEqual(result.frames);
+    // Forwarding order is deterministic: every phase appears exactly once in
+    // the order the pipeline emits it.
+    expect(phases(forwarded)).toEqual([
+      "selecting",
+      "planning",
+      "generating",
+      "validating",
+      "saving",
+      "running",
+      "complete",
+    ]);
+  });
+
+  it("defaults execute to false and skips run entirely", async () => {
+    const { result, save, run } = await serviceHarness([
+      llmResult(FIXED_DRAFT),
+    ]);
+
+    // No execute option passed: the graph is saved but never executed.
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("ok");
+    expect(result.executionId).toBeNull();
+  });
+
+  it("surfaces issues from the final validation when the outcome is failed", async () => {
+    const { result } = await serviceHarness([
+      llmResult(BROKEN_DRAFT),
+      llmResult(BROKEN_DRAFT),
+      llmResult(BROKEN_DRAFT),
+    ]);
+
+    expect(result.outcome).toBe("failed");
+    // issues come from the last validation round, not the first.
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "TYPE_MISMATCH" }),
+      ])
+    );
+    expect(result.repairAttempts).toBe(2);
+    expect(result.frames.find((f) => f.type === "error")).toMatchObject({
+      code: "UNREPAIRABLE",
+      recoverable: true,
+    });
+  });
+
+  it("does not save when the graph could not be repaired", async () => {
+    const { save, run, callLLM } = await serviceHarness([
+      llmResult(BROKEN_DRAFT),
+      llmResult(BROKEN_DRAFT),
+      llmResult(BROKEN_DRAFT),
+    ]);
+
+    expect(callLLM).toHaveBeenCalledTimes(3);
+    expect(save).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("reports a partial outcome when the run errors but the save succeeded", async () => {
+    const { result, save, run } = await serviceHarness(
+      [llmResult(FIXED_DRAFT)],
+      { execute: true, runStatus: "error" }
+    );
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(result.outcome).toBe("partial");
+    expect(result.executionId).toBe("exec-1");
+    expect(result.frames.find((f) => f.type === "done")).toMatchObject({
+      outcome: "partial",
+    });
+  });
+
+  it("accumulates token counts across repair attempts", async () => {
+    const { result } = await serviceHarness([
+      llmResult(BROKEN_DRAFT),
+      llmResult(FIXED_DRAFT),
+    ]);
+
+    // Two calls of 100 in / 50 out — the first attempt must not be lost.
+    expect(result.usage.inputTokens).toBe(200);
+    expect(result.usage.outputTokens).toBe(100);
+    // 200 in tokens at $15/M + 100 out at $75/M = $0.0105 → 11 credits.
+    expect(result.usage.credits).toBe(11);
+  });
+
+  it("recomputes withheld from the eligible catalog, not the warning text", async () => {
+    const { result } = await serviceHarness([llmResult(FIXED_DRAFT)], {
+      prompt: "post a slack message",
+      execute: true,
+    });
+
+    expect(result.withheld).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "send-slack-message",
+          reason: "integration",
+          provider: "slack",
+        }),
+      ])
+    );
+  });
+
+  it("never calls the LLM when any precondition fails", async () => {
+    const { result, callLLM, save, run } = await serviceHarness(
+      [llmResult(FIXED_DRAFT)],
+      { billingInfo: undefined }
+    );
+
+    expect(result.outcome).toBe("failed");
+    expect(callLLM).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(result.frames[0]).toMatchObject({ type: "error", code: "INTERNAL" });
+    expect(result.usage).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      credits: 0,
+    });
   });
 });

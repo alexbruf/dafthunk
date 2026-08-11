@@ -12,13 +12,15 @@
  * cannot be driven through real D1 in a test, so logic that leaks into it
  * becomes untestable by construction.
  *
- * NOTE: the `declare`d functions below are still contract-only and have no
- * body yet: `checkGeneratorPreconditions` lands in a later step, and
- * `generateWorkflow`/`listNodeTypes` with it. The three lifted free functions
- * (`callModel`, `saveWorkflow`, `runOnce`) are implemented and exported.
+ * All six exports are implemented: the three lifted free functions
+ * (`callModel`, `saveWorkflow`, `runOnce`) plus `checkGeneratorPreconditions`,
+ * `generateWorkflow` and `listNodeTypes`. The signatures are the fixed
+ * contract the route and MCP layers mock against.
  */
 
+import { calculateTokenUsage } from "@dafthunk/runtime/utils/usage";
 import type {
+  GenerationErrorCode,
   GenerationValidationIssue,
   GeneratorServerMessage,
   NodeType,
@@ -36,13 +38,19 @@ import {
   stampOnboardingStage,
 } from "../../db";
 import { callAgentLLM } from "../../durable-objects/agent-llm";
+import { CloudflareNodeRegistry } from "../../runtime/cloudflare-node-registry";
 import type { WorkflowExecutorParameters } from "../../services/workflow-executor";
 import { WorkflowExecutor } from "../../services/workflow-executor";
 import { WorkflowStore } from "../../stores/workflow-store";
 import { isCreditExhausted } from "../../utils/credits";
-import { GENERATOR_MODEL, GENERATOR_PROVIDER } from "./config";
+import {
+  GENERATOR_MODEL,
+  GENERATOR_PRICING,
+  GENERATOR_PROVIDER,
+} from "./config";
 import type { Ineligible } from "./eligibility";
 import type { GenerateCall, GenerateResult } from "./pipeline";
+import { runGenerationPipeline, selectCandidates } from "./pipeline";
 import { DRAFT_SCHEMA } from "./prompts";
 
 /** The billing row the pipeline needs; shaped by the query, not by us. */
@@ -249,6 +257,21 @@ export async function runOnce(
   return execution;
 }
 
+/** Node types offered to the model, for callers that want the catalog. */
+export function listNodeTypes(env: Bindings): NodeType[] {
+  return new CloudflareNodeRegistry(env, false).getNodeTypes();
+}
+
+/** An execution the caller opted out of, kept honest by a null executionId. */
+function skippedExecution(workflowId: string): WorkflowExecution {
+  return {
+    id: "",
+    workflowId,
+    status: "completed",
+    nodeExecutions: [],
+  };
+}
+
 /**
  * Assembles `PipelineDependencies` and runs, collecting frames instead of
  * streaming them.
@@ -259,11 +282,97 @@ export async function runOnce(
  * out of human-readable warning text would break the first time that text is
  * reworded.
  */
-export declare function generateWorkflow(
+export async function generateWorkflow(
   ctx: GeneratorContext,
   prompt: string,
-  opts?: GenerateWorkflowOptions
-): Promise<GenerateWorkflowResult>;
+  opts: GenerateWorkflowOptions = {}
+): Promise<GenerateWorkflowResult> {
+  const execute = opts.execute ?? false;
+  const frames: GeneratorServerMessage[] = [];
+  const emit = (frame: GeneratorServerMessage) => {
+    frames.push(frame);
+    opts.onFrame?.(frame);
+  };
 
-/** Node types offered to the model, for callers that want the catalog. */
-export declare function listNodeTypes(env: Bindings): NodeType[];
+  const precondition = await checkGeneratorPreconditions(ctx);
+  if (!precondition.ok) {
+    // ORG_NOT_FOUND is not a wire-level code; the DO has always surfaced it
+    // as INTERNAL, and this keeps route and MCP on the same shape.
+    const code: GenerationErrorCode =
+      precondition.code === "ORG_NOT_FOUND" ? "INTERNAL" : precondition.code;
+    const frame: GeneratorServerMessage = {
+      type: "error",
+      code,
+      message: precondition.message,
+      recoverable: false,
+    };
+    emit(frame);
+    return {
+      outcome: "failed",
+      workflowId: null,
+      executionId: null,
+      workflow: null,
+      repairAttempts: 0,
+      issues: [],
+      withheld: [],
+      usage: { inputTokens: 0, outputTokens: 0, credits: 0 },
+      frames,
+    };
+  }
+
+  const nodeTypes = listNodeTypes(ctx.env);
+  const { withheld } = selectCandidates(
+    prompt,
+    nodeTypes,
+    precondition.plan,
+    precondition.connectedProviders
+  );
+
+  const result = await runGenerationPipeline({
+    prompt,
+    nodeTypes,
+    plan: precondition.plan,
+    connectedProviders: precondition.connectedProviders,
+    apiHost: ctx.apiHost,
+    isCancelled: opts.signal ? () => opts.signal?.aborted ?? false : undefined,
+    emit,
+    callLLM: (call) => callModel(ctx.env, call),
+    save: (workflow) => saveWorkflow(ctx, workflow),
+    run: execute
+      ? (workflow, workflowId, parameters) =>
+          runOnce(
+            ctx,
+            precondition.billingInfo,
+            workflow,
+            workflowId,
+            parameters
+          )
+      : (_workflow, workflowId) =>
+          Promise.resolve(skippedExecution(workflowId)),
+  });
+
+  // `issues` and `repairAttempts` come from the final validation round; a run
+  // that crashed before validating (e.g. a malformed draft) has neither.
+  const validations = frames.filter((f) => f.type === "validation");
+  const finalValidation = validations[validations.length - 1];
+
+  return {
+    outcome: result.outcome,
+    workflowId: result.workflowId ?? null,
+    executionId: execute ? (result.executionId ?? null) : null,
+    workflow: result.workflow ?? null,
+    repairAttempts: finalValidation ? finalValidation.attempt : 0,
+    issues: finalValidation ? finalValidation.issues : [],
+    withheld,
+    usage: {
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      credits: calculateTokenUsage(
+        result.inputTokens,
+        result.outputTokens,
+        GENERATOR_PRICING
+      ),
+    },
+    frames,
+  };
+}
