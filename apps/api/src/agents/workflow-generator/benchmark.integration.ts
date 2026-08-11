@@ -3,7 +3,10 @@ import { validateWorkflow } from "@dafthunk/runtime";
 import type { NodeType, Workflow } from "@dafthunk/types";
 import OpenAI from "openai";
 import { describe, expect, it } from "vitest";
-
+import {
+  BENCHMARK_ORGANIZATION_ID,
+  BENCHMARK_USER_ID,
+} from "../../../test/benchmark-setup";
 import type { Bindings } from "../../context";
 import { callAgentLLM } from "../../durable-objects/agent-llm";
 import { CloudflareNodeRegistry } from "../../runtime/cloudflare-node-registry";
@@ -11,8 +14,8 @@ import { findStructuralProblems } from "../../templates/template-test-utils";
 import type { BenchmarkCase } from "./benchmark-cases";
 import { BENCHMARK_CASES } from "./benchmark-cases";
 import { GENERATOR_MODEL, GENERATOR_PROVIDER } from "./config";
+import { generateWorkflow } from "./generator-service";
 import type { GenerateCall } from "./pipeline";
-import { runGenerationPipeline } from "./pipeline";
 import { DRAFT_SCHEMA } from "./prompts";
 
 /**
@@ -185,42 +188,34 @@ async function runCase(
   // raised in there surfaces as "no graph produced" and the real reason is lost.
   const model = benchmarkModel();
 
-  const result = await runGenerationPipeline({
-    prompt: testCase.prompt,
-    nodeTypes: catalog,
-    // Pinned rather than derived: resolveOrganizationPlan returns "pro"
-    // outside production, so deriving it would silently benchmark a catalog
-    // that trial users never see.
-    plan: "pro",
-    connectedProviders: new Set([
-      "slack",
-      "discord",
-      "telegram",
-      "whatsapp",
-      "google-mail",
-      "github",
-    ]),
-    callLLM: async (call: GenerateCall) => {
-      attempts++;
-      return model.call(call);
+  // Driven through the service rather than the pipeline directly, so the run
+  // exercises the orchestration the HTTP route and MCP server actually call:
+  // preconditions, catalog selection, save, and the frame collection. D1 and R2
+  // are Miniflare-local, seeded in test/benchmark-setup.ts.
+  //
+  // `execute: false` — a generated graph is not run here. This measures whether
+  // a valid workflow comes out, not whether the executor is up.
+  const result = await generateWorkflow(
+    {
+      env: bindings,
+      organizationId: BENCHMARK_ORGANIZATION_ID,
+      userId: BENCHMARK_USER_ID,
     },
-    emit: (frame) => {
-      if (frame.type === "validation" && frame.attempt === 0) {
-        firstAttemptClean = frame.issues.every((i) => i.severity !== "fatal");
-      }
-      if (frame.type === "graph") finalWorkflow = frame.workflow;
-    },
-    // Saving and running are out of scope here: this measures whether a valid
-    // graph comes out, not whether Workers AI is up.
-    save: async () => "benchmark-workflow",
-    run: async () =>
-      ({
-        id: "benchmark-execution",
-        workflowId: "benchmark-workflow",
-        status: "completed",
-        nodeExecutions: [],
-      }) as never,
-  });
+    testCase.prompt,
+    {
+      execute: false,
+      callLLM: async (call: GenerateCall) => {
+        attempts++;
+        return model.call(call);
+      },
+      onFrame: (frame) => {
+        if (frame.type === "validation" && frame.attempt === 0) {
+          firstAttemptClean = frame.issues.every((i) => i.severity !== "fatal");
+        }
+        if (frame.type === "graph") finalWorkflow = frame.workflow;
+      },
+    }
+  );
 
   const validAfterRepair = result.outcome !== "failed";
   const structural = finalWorkflow

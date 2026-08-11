@@ -108,6 +108,15 @@ export interface GenerateWorkflowOptions {
   /** Live progress. HTTP ignores it; MCP maps it to progress notifications. */
   onFrame?: (frame: GeneratorServerMessage) => void;
   signal?: AbortSignal;
+  /**
+   * Overrides the model call. Defaults to `callModel`, the production path.
+   *
+   * Exists for the benchmark, which measures this orchestration across the 23
+   * shipped templates and would otherwise be locked to the configured provider.
+   * No production caller passes it — the route and MCP layers rely on the
+   * default, so an override cannot change what a real request does.
+   */
+  callLLM?: (call: GenerateCall) => Promise<GenerateResult>;
 }
 
 export async function checkGeneratorPreconditions(
@@ -336,7 +345,7 @@ export async function generateWorkflow(
     apiHost: ctx.apiHost,
     isCancelled: opts.signal ? () => opts.signal?.aborted ?? false : undefined,
     emit,
-    callLLM: (call) => callModel(ctx.env, call),
+    callLLM: opts.callLLM ?? ((call) => callModel(ctx.env, call)),
     save: (workflow) => saveWorkflow(ctx, workflow),
     run: execute
       ? (workflow, workflowId, parameters) =>
