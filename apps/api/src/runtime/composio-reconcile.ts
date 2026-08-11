@@ -114,8 +114,20 @@ export function planComposioReconciliation(
 
     // No account means the integration was removed (ON DELETE SET NULL). There
     // is nothing to subscribe as, and choosing another account would subscribe
-    // a different user's data.
-    if (!row.connectedAccountId) continue;
+    // a different user's data — but anything already subscribed has to go,
+    // because it is bound to an account that no longer exists. Leaving it holds
+    // a live upstream subscription nothing can reach and wedges the row: it can
+    // neither re-subscribe nor release what it claims.
+    if (!row.connectedAccountId) {
+      if (existing) {
+        actions.push({
+          kind: "delete",
+          workflowId: row.workflowId,
+          instanceId: existing.id,
+        });
+      }
+      continue;
+    }
 
     if (!existing) {
       // Covers both "never created" and "the stored id no longer exists
