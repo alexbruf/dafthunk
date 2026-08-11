@@ -18,6 +18,16 @@ import { beforeAll } from "vitest";
 export const BENCHMARK_ORGANIZATION_ID = "benchmark-org";
 export const BENCHMARK_USER_ID = "benchmark-user";
 
+/** The exact set the benchmark used to pass to the pipeline by hand. */
+const BENCHMARK_PROVIDERS = [
+  "slack",
+  "discord",
+  "telegram",
+  "whatsapp",
+  "google-mail",
+  "github",
+] as const;
+
 // `cloudflare:test`'s ambient Env carries neither the D1 binding from
 // wrangler.test.jsonc nor the migrations binding this config adds, so the shape
 // is narrowed here rather than widening the shared ProvidedEnv declaration.
@@ -42,4 +52,26 @@ beforeAll(async () => {
   )
     .bind(BENCHMARK_ORGANIZATION_ID, "Benchmark Org", 1_000_000)
     .run();
+
+  // These are load-bearing, not decoration. `generateWorkflow` derives
+  // `connectedProviders` from these rows, and that feeds `filterEligible`, so
+  // an org with no integrations is offered a materially smaller catalog. The
+  // benchmark used to hardcode exactly this list when it called the pipeline
+  // directly; seeding the same six keeps a before/after comparison honest
+  // rather than silently measuring two different node catalogs.
+  for (const provider of BENCHMARK_PROVIDERS) {
+    await DB.prepare(
+      `INSERT OR REPLACE INTO integrations
+         (id, name, provider, status, encrypted_token, organization_id)
+       VALUES (?, ?, ?, 'active', ?, ?)`
+    )
+      .bind(
+        `benchmark-${provider}`,
+        `Benchmark ${provider}`,
+        provider,
+        "benchmark-not-a-real-token",
+        BENCHMARK_ORGANIZATION_ID
+      )
+      .run();
+  }
 });
