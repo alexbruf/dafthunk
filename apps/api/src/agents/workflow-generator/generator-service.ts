@@ -27,16 +27,19 @@ import type {
 } from "@dafthunk/types";
 
 import type { Bindings } from "../../context";
-import type { getOrganizationBillingInfo } from "../../db";
 import {
   createDatabase,
+  getIntegrations,
+  getOrganizationBillingInfo,
   resolveOrganizationBillingOptions,
+  resolveOrganizationPlan,
   stampOnboardingStage,
 } from "../../db";
 import { callAgentLLM } from "../../durable-objects/agent-llm";
 import type { WorkflowExecutorParameters } from "../../services/workflow-executor";
 import { WorkflowExecutor } from "../../services/workflow-executor";
 import { WorkflowStore } from "../../stores/workflow-store";
+import { isCreditExhausted } from "../../utils/credits";
 import { GENERATOR_MODEL, GENERATOR_PROVIDER } from "./config";
 import type { Ineligible } from "./eligibility";
 import type { GenerateCall, GenerateResult } from "./pipeline";
@@ -99,9 +102,69 @@ export interface GenerateWorkflowOptions {
   signal?: AbortSignal;
 }
 
-export declare function checkGeneratorPreconditions(
+export async function checkGeneratorPreconditions(
   ctx: GeneratorContext
-): Promise<GeneratorPrecondition>;
+): Promise<GeneratorPrecondition> {
+  const db = createDatabase(ctx.env.DB);
+
+  // Independent reads on the same key; from inside a DO each is a
+  // cross-service hop, so overlapping them saves a round trip.
+  const [billingInfo, integrations] = await Promise.all([
+    getOrganizationBillingInfo(db, ctx.organizationId),
+    getIntegrations(db, ctx.organizationId),
+  ]);
+
+  if (!billingInfo) {
+    return {
+      ok: false,
+      code: "ORG_NOT_FOUND",
+      message: "Organization not found.",
+    };
+  }
+
+  if (isCreditExhausted(billingInfo, ctx.env.CLOUDFLARE_ENV)) {
+    return {
+      ok: false,
+      code: "CREDITS_EXHAUSTED",
+      message: "Not enough compute credits to generate a workflow.",
+    };
+  }
+
+  // The AI Gateway helpers silently degrade to an unusable client when any of
+  // these is missing, producing a confusing 404 deep in the SDK.
+  if (
+    !ctx.env.CLOUDFLARE_ACCOUNT_ID ||
+    !ctx.env.CLOUDFLARE_AI_GATEWAY_ID ||
+    !ctx.env.CLOUDFLARE_API_TOKEN
+  ) {
+    return {
+      ok: false,
+      code: "MISCONFIGURED",
+      message:
+        "Workflow generation is not configured on this deployment (missing AI Gateway settings).",
+    };
+  }
+
+  const connectedProviders = new Set(
+    integrations.map((integration) => integration.provider)
+  );
+
+  // Resolved the same way the runtime's subscription gate resolves it, env
+  // included, so the catalog offered never contains a node the executor
+  // would then refuse. Note this returns "pro" outside production, so tests
+  // must pin the plan rather than derive it.
+  const plan =
+    resolveOrganizationPlan(billingInfo, ctx.env.CLOUDFLARE_ENV) === "pro"
+      ? "pro"
+      : "trial";
+
+  return {
+    ok: true,
+    plan,
+    billingInfo,
+    connectedProviders,
+  };
+}
 
 export async function callModel(
   env: Bindings,

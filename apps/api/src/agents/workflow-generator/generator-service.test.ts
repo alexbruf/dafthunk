@@ -1,9 +1,14 @@
 import type { Workflow, WorkflowExecution } from "@dafthunk/types";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Bindings } from "../../context";
 import { stampOnboardingStage } from "../../db";
-import { callModel, runOnce, saveWorkflow } from "./generator-service";
+import {
+  callModel,
+  checkGeneratorPreconditions,
+  runOnce,
+  saveWorkflow,
+} from "./generator-service";
 
 // ── Mocked module seams ──────────────────────────────────────────────────
 //
@@ -116,6 +121,14 @@ function makeEnv(overrides: Partial<Record<string, unknown>> = {}): Bindings {
   } as unknown as Bindings;
 }
 
+/** An env with specific secrets removed, as a broken deployment would have. */
+function envWithout(...keys: Array<keyof Bindings>): Bindings {
+  const env = makeEnv();
+  for (const key of keys)
+    delete (env as unknown as Record<string, unknown>)[key];
+  return env;
+}
+
 function sampleWorkflow(): Workflow {
   return {
     id: "wf-1",
@@ -135,6 +148,22 @@ function sampleWorkflow(): Workflow {
     edges: [],
   };
 }
+
+// Shared defaults, re-seeded between tests so no case inherits another's
+// `state` mutations (a leak here quietly changes which gate a test is
+// exercising, and for billing that means asserting on a different plan).
+beforeEach(() => {
+  state.billingInfo = billingRow();
+  state.integrations = [];
+  state.creditExhausted = false;
+  state.llmQueue = [];
+  state.runStatus = "completed";
+  state.saved.length = 0;
+  state.runCalls.length = 0;
+  state.callLLM.mockClear();
+  state.save.mockClear();
+  state.execute.mockClear();
+});
 
 // ── Step 1: unit coverage for the lifted free functions ──────────────────
 //
@@ -262,5 +291,122 @@ describe("runOnce", () => {
     expect(call.organizationId).toBe("org-1");
     expect(call.computeCredits).toBe(500);
     expect(execution).toMatchObject({ id: "exec-1", workflowId: "wf-1" });
+  });
+});
+
+// ── Step 2: preconditions that must hold before any model call ──────────
+//
+// These mirror the inline guards the generator DO used to run before touching
+// the pipeline. Returned as a discriminated union rather than thrown so the
+// route and MCP layers can map the same codes onto their own error shapes.
+
+describe("checkGeneratorPreconditions", () => {
+  it("returns MISCONFIGURED when CLOUDFLARE_AI_GATEWAY_ID is absent", async () => {
+    const result = await checkGeneratorPreconditions({
+      env: envWithout("CLOUDFLARE_AI_GATEWAY_ID"),
+      organizationId: "org-1",
+      userId: "user-1",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ ok: false, code: "MISCONFIGURED" })
+    );
+  });
+
+  it("returns MISCONFIGURED when CLOUDFLARE_API_TOKEN is absent", async () => {
+    const result = await checkGeneratorPreconditions({
+      env: envWithout("CLOUDFLARE_API_TOKEN"),
+      organizationId: "org-1",
+      userId: "user-1",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ ok: false, code: "MISCONFIGURED" })
+    );
+  });
+
+  it("returns MISCONFIGURED when CLOUDFLARE_ACCOUNT_ID is absent", async () => {
+    const result = await checkGeneratorPreconditions({
+      env: envWithout("CLOUDFLARE_ACCOUNT_ID"),
+      organizationId: "org-1",
+      userId: "user-1",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ ok: false, code: "MISCONFIGURED" })
+    );
+  });
+
+  it("returns CREDITS_EXHAUSTED when the org has no credits left", async () => {
+    state.creditExhausted = true;
+
+    const result = await checkGeneratorPreconditions({
+      env: makeEnv(),
+      organizationId: "org-1",
+      userId: "user-1",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ ok: false, code: "CREDITS_EXHAUSTED" })
+    );
+  });
+
+  it("returns ORG_NOT_FOUND when the billing lookup yields undefined", async () => {
+    state.billingInfo = undefined;
+
+    const result = await checkGeneratorPreconditions({
+      env: makeEnv(),
+      organizationId: "org-1",
+      userId: "user-1",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ ok: false, code: "ORG_NOT_FOUND" })
+    );
+  });
+
+  it("resolves plan trial for a non-subscribed org in production", async () => {
+    state.billingInfo = billingRow({
+      subscriptionStatus: null,
+      currentPeriodEnd: null,
+    });
+
+    const result = await checkGeneratorPreconditions({
+      env: makeEnv(),
+      organizationId: "org-1",
+      userId: "user-1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.plan).toBe("trial");
+  });
+
+  it("resolves plan pro for an actively subscribed org in production", async () => {
+    state.billingInfo = billingRow({ subscriptionStatus: "active" });
+
+    const result = await checkGeneratorPreconditions({
+      env: makeEnv(),
+      organizationId: "org-1",
+      userId: "user-1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.plan).toBe("pro");
+  });
+
+  it("resolves connectedProviders from the integrations rows", async () => {
+    state.billingInfo = billingRow();
+    state.integrations = [{ provider: "slack" }, { provider: "github" }];
+
+    const result = await checkGeneratorPreconditions({
+      env: makeEnv(),
+      organizationId: "org-1",
+      userId: "user-1",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.connectedProviders).toEqual(new Set(["slack", "github"]));
+    }
   });
 });

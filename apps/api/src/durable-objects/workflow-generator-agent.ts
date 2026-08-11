@@ -40,20 +40,14 @@ import {
 } from "../agents/workflow-generator/config";
 import {
   callModel,
+  checkGeneratorPreconditions,
   runOnce,
   saveWorkflow,
 } from "../agents/workflow-generator/generator-service";
 import type { GenerateCall } from "../agents/workflow-generator/pipeline";
 import { runGenerationPipeline } from "../agents/workflow-generator/pipeline";
 import type { Bindings } from "../context";
-import {
-  createDatabase,
-  getIntegrations,
-  getOrganizationBillingInfo,
-  resolveOrganizationPlan,
-} from "../db";
 import { CloudflareNodeRegistry } from "../runtime/cloudflare-node-registry";
-import { isCreditExhausted } from "../utils/credits";
 
 // ── Agent SDK type shim ──────────────────────────────────────────────────
 // The agents bundled d.ts doesn't resolve some inherited Agent/Server methods
@@ -321,48 +315,25 @@ export class WorkflowGeneratorAgent extends Agent<
     const organizationId = this.state?.organizationId;
     if (!userId || !organizationId) return;
 
-    const db = createDatabase(this.env.DB);
-
     try {
-      // Independent reads on the same key; from inside a DO each is a
-      // cross-service hop, so overlapping them saves a round trip.
-      const [billingInfo, integrations] = await Promise.all([
-        getOrganizationBillingInfo(db, organizationId),
-        getIntegrations(db, organizationId),
-      ]);
+      const precondition = await checkGeneratorPreconditions({
+        env: this.env,
+        organizationId,
+        userId,
+        apiHost: this.state?.apiHost,
+      });
 
-      if (!billingInfo) {
+      if (!precondition.ok) {
+        // ORG_NOT_FOUND is not a wire-level code; the DO historically surfaced
+        // it as INTERNAL, and the socket spec has not changed.
+        const code =
+          precondition.code === "ORG_NOT_FOUND"
+            ? "INTERNAL"
+            : precondition.code;
         this.fail(sessionId, {
           type: "error",
-          code: "INTERNAL",
-          message: "Organization not found.",
-          recoverable: false,
-        });
-        return;
-      }
-
-      if (isCreditExhausted(billingInfo, this.env.CLOUDFLARE_ENV)) {
-        this.fail(sessionId, {
-          type: "error",
-          code: "CREDITS_EXHAUSTED",
-          message: "Not enough compute credits to generate a workflow.",
-          recoverable: false,
-        });
-        return;
-      }
-
-      // The AI Gateway helpers silently degrade to an unusable client when any
-      // of these is missing, producing a confusing 404 deep in the SDK.
-      if (
-        !this.env.CLOUDFLARE_ACCOUNT_ID ||
-        !this.env.CLOUDFLARE_AI_GATEWAY_ID ||
-        !this.env.CLOUDFLARE_API_TOKEN
-      ) {
-        this.fail(sessionId, {
-          type: "error",
-          code: "MISCONFIGURED",
-          message:
-            "Workflow generation is not configured on this deployment (missing AI Gateway settings).",
+          code,
+          message: precondition.message,
           recoverable: false,
         });
         return;
@@ -374,24 +345,11 @@ export class WorkflowGeneratorAgent extends Agent<
       );
       const nodeTypes: NodeType[] = registry.getNodeTypes();
 
-      const connectedProviders = new Set(
-        integrations.map((integration) => integration.provider)
-      );
-
-      // Resolved the same way the runtime's subscription gate resolves it, env
-      // included, so the catalog offered never contains a node the executor
-      // would then refuse. Note this returns "pro" outside production, so the
-      // benchmark has to pin the plan rather than derive it.
-      const plan =
-        resolveOrganizationPlan(billingInfo, this.env.CLOUDFLARE_ENV) === "pro"
-          ? "pro"
-          : "trial";
-
       const result = await runGenerationPipeline({
         prompt,
         nodeTypes,
-        plan,
-        connectedProviders,
+        plan: precondition.plan,
+        connectedProviders: precondition.connectedProviders,
         apiHost: this.state?.apiHost,
         isCancelled: () => this.isCancelled(sessionId),
         emit: (frame) => {
@@ -423,7 +381,7 @@ export class WorkflowGeneratorAgent extends Agent<
               userId,
               apiHost: this.state?.apiHost,
             },
-            billingInfo,
+            precondition.billingInfo,
             workflow,
             workflowId,
             parameters
