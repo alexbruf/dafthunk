@@ -180,6 +180,11 @@ async function runCase(
   let firstAttemptClean: boolean | null = null;
   let finalWorkflow: Workflow | undefined;
 
+  // Resolved out here, not inside callLLM: the pipeline catches everything its
+  // dependencies throw and reports it as a failed generation, so a config error
+  // raised in there surfaces as "no graph produced" and the real reason is lost.
+  const model = benchmarkModel();
+
   const result = await runGenerationPipeline({
     prompt: testCase.prompt,
     nodeTypes: catalog,
@@ -197,7 +202,7 @@ async function runCase(
     ]),
     callLLM: async (call: GenerateCall) => {
       attempts++;
-      return benchmarkModel().call(call);
+      return model.call(call);
     },
     emit: (frame) => {
       if (frame.type === "validation" && frame.attempt === 0) {
