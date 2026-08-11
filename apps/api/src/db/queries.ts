@@ -1359,6 +1359,56 @@ export async function upsertBotTrigger(
  * trigger-instance listing is project-wide: one pass sees every instance, so it
  * can spot orphans that no organization's rows claim.
  */
+/**
+ * Records the subscription a saved workflow wants. The reconciler works from
+ * these rows, so a Composio-triggered workflow that never writes one silently
+ * never fires.
+ *
+ * `instanceId` is deliberately left alone on conflict: it is owned by the
+ * reconciler, and clobbering it here would orphan the live subscription and
+ * make the next pass create a second one.
+ */
+export async function upsertComposioTrigger(
+  db: ReturnType<typeof createDatabase>,
+  values: {
+    workflowId: string;
+    organizationId: string;
+    integrationId: string | null;
+    triggerSlug: string;
+    config: string;
+    active: boolean;
+  }
+) {
+  return db
+    .insert(composioTriggers)
+    .values({ ...values, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: composioTriggers.workflowId,
+      set: {
+        integrationId: values.integrationId,
+        triggerSlug: values.triggerSlug,
+        config: values.config,
+        active: values.active,
+        updatedAt: new Date(),
+      },
+    });
+}
+
+/**
+ * Marks the row inactive rather than deleting it, so the reconciler still sees
+ * the instance id it has to remove upstream. Deleting here would strand the
+ * subscription, which would go on billing and delivering forever.
+ */
+export async function deactivateComposioTrigger(
+  db: ReturnType<typeof createDatabase>,
+  workflowId: string
+) {
+  return db
+    .update(composioTriggers)
+    .set({ active: false, updatedAt: new Date() })
+    .where(eq(composioTriggers.workflowId, workflowId));
+}
+
 export async function getAllComposioTriggersWithIntegration(
   db: ReturnType<typeof createDatabase>
 ) {
