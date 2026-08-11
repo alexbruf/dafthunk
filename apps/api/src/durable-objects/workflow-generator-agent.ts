@@ -29,37 +29,31 @@ import type {
   GeneratorClientMessage,
   GeneratorServerMessage,
   NodeType,
-  Workflow,
-  WorkflowExecution,
 } from "@dafthunk/types";
 import { Agent } from "agents";
 import type { Connection, ConnectionContext } from "partyserver";
 
 import {
-  GENERATOR_MODEL,
   GENERATOR_PRICING,
-  GENERATOR_PROVIDER,
   RUN_RETENTION_MS,
   RUN_STALL_TIMEOUT_MS,
 } from "../agents/workflow-generator/config";
+import {
+  callModel,
+  runOnce,
+  saveWorkflow,
+} from "../agents/workflow-generator/generator-service";
 import type { GenerateCall } from "../agents/workflow-generator/pipeline";
 import { runGenerationPipeline } from "../agents/workflow-generator/pipeline";
-import { DRAFT_SCHEMA } from "../agents/workflow-generator/prompts";
 import type { Bindings } from "../context";
 import {
   createDatabase,
   getIntegrations,
   getOrganizationBillingInfo,
-  resolveOrganizationBillingOptions,
   resolveOrganizationPlan,
-  stampOnboardingStage,
 } from "../db";
 import { CloudflareNodeRegistry } from "../runtime/cloudflare-node-registry";
-import type { WorkflowExecutorParameters } from "../services/workflow-executor";
-import { WorkflowExecutor } from "../services/workflow-executor";
-import { WorkflowStore } from "../stores/workflow-store";
 import { isCreditExhausted } from "../utils/credits";
-import { callAgentLLM } from "./agent-llm";
 
 // ── Agent SDK type shim ──────────────────────────────────────────────────
 // The agents bundled d.ts doesn't resolve some inherited Agent/Server methods
@@ -410,15 +404,28 @@ export class WorkflowGeneratorAgent extends Agent<
           }
           this.emit(frame);
         },
-        callLLM: (call: GenerateCall) => this.callModel(call),
-        save: (workflow) => this.saveWorkflow(workflow, userId, organizationId),
+        callLLM: (call: GenerateCall) => callModel(this.env, call),
+        save: (workflow) =>
+          saveWorkflow(
+            {
+              env: this.env,
+              organizationId,
+              userId,
+              apiHost: this.state?.apiHost,
+            },
+            workflow
+          ),
         run: (workflow, workflowId, parameters) =>
-          this.runOnce(
+          runOnce(
+            {
+              env: this.env,
+              organizationId,
+              userId,
+              apiHost: this.state?.apiHost,
+            },
+            billingInfo,
             workflow,
             workflowId,
-            userId,
-            organizationId,
-            billingInfo,
             parameters
           ),
       });
@@ -493,92 +500,5 @@ export class WorkflowGeneratorAgent extends Agent<
 
   async alarm(): Promise<void> {
     await this.durableCtx.storage.deleteAll();
-  }
-
-  private async callModel(call: GenerateCall) {
-    const response = await callAgentLLM(this.env, {
-      provider: GENERATOR_PROVIDER,
-      model: GENERATOR_MODEL,
-      instructions: call.system,
-      messages: call.messages,
-      tools: [],
-      schema: DRAFT_SCHEMA as unknown as Record<string, unknown>,
-    });
-
-    return {
-      content: response.content ?? "",
-      inputTokens: response.inputTokens ?? 0,
-      outputTokens: response.outputTokens ?? 0,
-    };
-  }
-
-  private async saveWorkflow(
-    workflow: Workflow,
-    userId: string,
-    organizationId: string
-  ): Promise<string> {
-    const workflowId = crypto.randomUUID();
-    const store = new WorkflowStore(this.env);
-
-    await store.save({
-      id: workflowId,
-      name: workflow.name || "Generated Workflow",
-      description: workflow.description,
-      trigger: workflow.trigger,
-      runtime: "workflow",
-      organizationId,
-      nodes: workflow.nodes,
-      edges: workflow.edges,
-      apiHost: this.state?.apiHost,
-    });
-
-    const db = createDatabase(this.env.DB);
-    try {
-      await stampOnboardingStage(db, userId, "workflowCreated");
-    } catch (error) {
-      console.error("Failed to stamp workflowCreated:", error);
-    }
-
-    return workflowId;
-  }
-
-  /**
-   * Runs the generated workflow once, synchronously.
-   *
-   * `runtime: "worker"` is deliberate and differs from what was saved: it
-   * returns the finished execution inline (no polling, no second socket) and
-   * stamps `workflowExecutedOk` itself. The cost is a 30s ceiling, which the
-   * caller surfaces as a partial result rather than a failure.
-   */
-  private async runOnce(
-    workflow: Workflow,
-    workflowId: string,
-    userId: string,
-    organizationId: string,
-    billingInfo: NonNullable<
-      Awaited<ReturnType<typeof getOrganizationBillingInfo>>
-    >,
-    parameters: WorkflowExecutorParameters
-  ): Promise<WorkflowExecution> {
-    const { execution } = await WorkflowExecutor.execute({
-      workflow: {
-        id: workflowId,
-        name: workflow.name,
-        trigger: workflow.trigger,
-        runtime: "worker",
-        nodes: workflow.nodes,
-        edges: workflow.edges,
-      },
-      userId,
-      organizationId,
-      ...resolveOrganizationBillingOptions(
-        billingInfo,
-        this.env.CLOUDFLARE_ENV
-      ),
-      parameters,
-      env: this.env,
-    });
-
-    return execution;
   }
 }

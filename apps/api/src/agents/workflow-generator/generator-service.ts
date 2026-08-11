@@ -12,11 +12,10 @@
  * cannot be driven through real D1 in a test, so logic that leaks into it
  * becomes untestable by construction.
  *
- * NOTE: the function signatures below are `declare`d — this file is currently
- * the agreed contract, not the implementation. It exists ahead of the bodies so
- * the route and MCP layers can be built and mocked against a fixed shape. The
- * `declare` keywords come off as each body lands; until then this module has no
- * runtime exports and may only be imported for its types or behind `vi.mock`.
+ * NOTE: the `declare`d functions below are still contract-only and have no
+ * body yet: `checkGeneratorPreconditions` lands in a later step, and
+ * `generateWorkflow`/`listNodeTypes` with it. The three lifted free functions
+ * (`callModel`, `saveWorkflow`, `runOnce`) are implemented and exported.
  */
 
 import type {
@@ -29,9 +28,19 @@ import type {
 
 import type { Bindings } from "../../context";
 import type { getOrganizationBillingInfo } from "../../db";
+import {
+  createDatabase,
+  resolveOrganizationBillingOptions,
+  stampOnboardingStage,
+} from "../../db";
+import { callAgentLLM } from "../../durable-objects/agent-llm";
 import type { WorkflowExecutorParameters } from "../../services/workflow-executor";
+import { WorkflowExecutor } from "../../services/workflow-executor";
+import { WorkflowStore } from "../../stores/workflow-store";
+import { GENERATOR_MODEL, GENERATOR_PROVIDER } from "./config";
 import type { Ineligible } from "./eligibility";
 import type { GenerateCall, GenerateResult } from "./pipeline";
+import { DRAFT_SCHEMA } from "./prompts";
 
 /** The billing row the pipeline needs; shaped by the query, not by us. */
 export type GeneratorBillingInfo = NonNullable<
@@ -94,23 +103,88 @@ export declare function checkGeneratorPreconditions(
   ctx: GeneratorContext
 ): Promise<GeneratorPrecondition>;
 
-export declare function callModel(
+export async function callModel(
   env: Bindings,
   call: GenerateCall
-): Promise<GenerateResult>;
+): Promise<GenerateResult> {
+  const response = await callAgentLLM(env, {
+    provider: GENERATOR_PROVIDER,
+    model: GENERATOR_MODEL,
+    instructions: call.system,
+    messages: call.messages,
+    tools: [],
+    schema: DRAFT_SCHEMA as unknown as Record<string, unknown>,
+  });
 
-export declare function saveWorkflow(
+  return {
+    content: response.content ?? "",
+    inputTokens: response.inputTokens ?? 0,
+    outputTokens: response.outputTokens ?? 0,
+  };
+}
+
+export async function saveWorkflow(
   ctx: GeneratorContext,
   workflow: Workflow
-): Promise<string>;
+): Promise<string> {
+  const workflowId = crypto.randomUUID();
+  const store = new WorkflowStore(ctx.env);
 
-export declare function runOnce(
+  await store.save({
+    id: workflowId,
+    name: workflow.name || "Generated Workflow",
+    description: workflow.description,
+    trigger: workflow.trigger,
+    runtime: "workflow",
+    organizationId: ctx.organizationId,
+    nodes: workflow.nodes,
+    edges: workflow.edges,
+    apiHost: ctx.apiHost,
+  });
+
+  const db = createDatabase(ctx.env.DB);
+  try {
+    await stampOnboardingStage(db, ctx.userId, "workflowCreated");
+  } catch (error) {
+    console.error("Failed to stamp workflowCreated:", error);
+  }
+
+  return workflowId;
+}
+
+/**
+ * Runs the generated workflow once, synchronously.
+ *
+ * `runtime: "worker"` is deliberate and differs from what was saved: it
+ * returns the finished execution inline (no polling, no second socket) and
+ * stamps `workflowExecutedOk` itself. The cost is a 30s ceiling, which the
+ * caller surfaces as a partial result rather than a failure.
+ */
+export async function runOnce(
   ctx: GeneratorContext,
   billingInfo: GeneratorBillingInfo,
   workflow: Workflow,
   workflowId: string,
   parameters: WorkflowExecutorParameters
-): Promise<WorkflowExecution>;
+): Promise<WorkflowExecution> {
+  const { execution } = await WorkflowExecutor.execute({
+    workflow: {
+      id: workflowId,
+      name: workflow.name,
+      trigger: workflow.trigger,
+      runtime: "worker",
+      nodes: workflow.nodes,
+      edges: workflow.edges,
+    },
+    userId: ctx.userId,
+    organizationId: ctx.organizationId,
+    ...resolveOrganizationBillingOptions(billingInfo, ctx.env.CLOUDFLARE_ENV),
+    parameters,
+    env: ctx.env,
+  });
+
+  return execution;
+}
 
 /**
  * Assembles `PipelineDependencies` and runs, collecting frames instead of
