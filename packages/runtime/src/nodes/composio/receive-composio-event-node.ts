@@ -76,11 +76,27 @@ export class ReceiveComposioEventNode extends ExecutableNode {
     ],
   };
 
-  public async execute(_context: NodeContext): Promise<NodeExecution> {
-    // Implemented by the catalog/trigger work item. Registration is gated on
-    // COMPOSIO_API_KEY, so this is unreachable in any configured environment.
-    return this.createErrorResult(
-      "Composio triggers are not enabled in this environment"
-    );
+  public async execute(context: NodeContext): Promise<NodeExecution> {
+    try {
+      if (!context.composioEvent) {
+        throw new Error(
+          "Composio event information is required but not provided in the context."
+        );
+      }
+
+      const { payload, triggerSlug, toolkitSlug, eventId } =
+        context.composioEvent;
+
+      return this.createSuccessResult({
+        payload,
+        triggerSlug,
+        toolkitSlug,
+        eventId,
+      });
+    } catch (error) {
+      return this.createErrorResult(
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 }

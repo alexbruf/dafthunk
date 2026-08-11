@@ -15,6 +15,7 @@ import {
   type BotTriggerRow,
   bots,
   botTriggers,
+  composioTriggers,
   createDatabase,
   type DatabaseInsert,
   type DatabaseRow,
@@ -1341,6 +1342,28 @@ export async function upsertBotTrigger(
     .returning();
 
   return result;
+}
+
+/**
+ * Candidate workflows for one Composio trigger instance.
+ *
+ * Returns rows in whatever state they are stored in — including inactive ones —
+ * because the webhook's `selectTriggerTargets` owns every routing decision.
+ * Keeping the filtering out of SQL is what makes that decision testable: the
+ * test-pool D1 has no schema.
+ */
+export async function getComposioTriggersByInstanceId(
+  db: ReturnType<typeof createDatabase>,
+  instanceId: string
+) {
+  return db
+    .select({
+      composioTrigger: composioTriggers,
+      workflow: workflows,
+    })
+    .from(composioTriggers)
+    .innerJoin(workflows, eq(composioTriggers.workflowId, workflows.id))
+    .where(eq(composioTriggers.instanceId, instanceId));
 }
 
 export async function updateBotTriggerMetadataByBot(
