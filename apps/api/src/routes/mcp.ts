@@ -7,12 +7,16 @@
  * the `McpBackends` wired here from the same store/service paths the HTTP
  * routes use, so the MCP surface and the REST surface share the real logic.
  *
- * AUTH MOUNT POINT: `accessIdentityMiddleware` (managed Access OAuth — built by
- * a separate change) attaches here, between the route and the handler below.
- * It must read `Cf-Access-Jwt-Assertion`, validate the Access signature and the
- * application `aud` tag, resolve email → user → membership, and set
- * `userId` + `organizationId` on the Hono context exactly like `jwtMiddleware`
- * does. Nothing in this file may run without those two variables.
+ * Auth is `accessIdentityMiddleware`: it reads `Cf-Access-Jwt-Assertion`,
+ * validates the Access signature, `aud` and `iss`, resolves email → user →
+ * membership, and sets `userId` + `organizationId` exactly as `jwtMiddleware`
+ * does. Nothing in this file runs without those two variables, and the handler
+ * re-checks them rather than trusting the mount.
+ *
+ * Deliberately not API keys: those resolve to an organization but not to a
+ * user, and `WorkflowExecutor.execute` needs a real one. Access supplies an
+ * email, so attribution survives. API keys stay the path for unattended
+ * automation, which is also where `execute` is allowed to default true.
  */
 
 import type {
@@ -35,6 +39,7 @@ import {
   type McpBackends,
   type McpServerContext,
 } from "../mcp/mcp-server";
+import { accessIdentityMiddleware } from "../middleware/access-identity";
 import { CloudflareExecutionStore } from "../runtime/cloudflare-execution-store";
 import { CloudflareNodeRegistry } from "../runtime/cloudflare-node-registry";
 import {
@@ -147,7 +152,8 @@ const mcpBackends: McpBackends = {
   getExecution,
 };
 
-// NOTE: accessIdentityMiddleware attaches here (see module doc comment).
+mcpRoutes.use("/", accessIdentityMiddleware);
+
 mcpRoutes.all("/", async (c) => {
   const organizationId = c.get("organizationId");
   const userId = c.get("userId");
