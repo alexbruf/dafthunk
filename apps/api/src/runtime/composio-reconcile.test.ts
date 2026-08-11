@@ -21,7 +21,7 @@ const row = (over: Partial<ComposioTriggerRow> = {}): ComposioTriggerRow => ({
   organizationId: "org_1",
   integrationId: "int_1",
   connectedAccountId: "ca_1",
-  triggerSlug: "GITHUB_STAR_ADDED",
+  triggerSlug: "GITHUB_STAR_ADDED_EVENT",
   instanceId: null,
   config: { owner: "acme", repo: "widgets" },
   active: true,
@@ -36,7 +36,7 @@ describe("planComposioReconciliation", () => {
       {
         kind: "create",
         workflowId: "wf_1",
-        triggerSlug: "GITHUB_STAR_ADDED",
+        triggerSlug: "GITHUB_STAR_ADDED_EVENT",
         connectedAccountId: "ca_1",
         config: { owner: "acme", repo: "widgets" },
       },
@@ -49,7 +49,7 @@ describe("planComposioReconciliation", () => {
       [
         {
           id: "ti_1",
-          triggerSlug: "GITHUB_STAR_ADDED",
+          triggerSlug: "GITHUB_STAR_ADDED_EVENT",
           connectedAccountId: "ca_1",
           config: { owner: "acme", repo: "widgets" },
           disabled: false,
@@ -70,7 +70,7 @@ describe("planComposioReconciliation", () => {
       [
         {
           id: "ti_new",
-          triggerSlug: "GITHUB_STAR_ADDED",
+          triggerSlug: "GITHUB_STAR_ADDED_EVENT",
           connectedAccountId: "ca_1",
           config: { owner: "acme", repo: "widgets" },
           disabled: false,
@@ -86,7 +86,7 @@ describe("planComposioReconciliation", () => {
       [
         {
           id: "ti_1",
-          triggerSlug: "GITHUB_STAR_ADDED",
+          triggerSlug: "GITHUB_STAR_ADDED_EVENT",
           connectedAccountId: "ca_1",
           config: { owner: "acme", repo: "widgets" },
           disabled: false,
@@ -99,7 +99,7 @@ describe("planComposioReconciliation", () => {
         kind: "update",
         workflowId: "wf_1",
         instanceId: "ti_1",
-        triggerSlug: "GITHUB_STAR_ADDED",
+        triggerSlug: "GITHUB_STAR_ADDED_EVENT",
         connectedAccountId: "ca_1",
         config: { owner: "acme", repo: "gadgets" },
       },
@@ -112,7 +112,7 @@ describe("planComposioReconciliation", () => {
       [
         {
           id: "ti_1",
-          triggerSlug: "GITHUB_STAR_ADDED",
+          triggerSlug: "GITHUB_STAR_ADDED_EVENT",
           connectedAccountId: "ca_1",
           config: { owner: "acme", repo: "widgets" },
           disabled: false,
@@ -131,7 +131,7 @@ describe("planComposioReconciliation", () => {
       [
         {
           id: "ti_1",
-          triggerSlug: "GITHUB_STAR_ADDED",
+          triggerSlug: "GITHUB_STAR_ADDED_EVENT",
           connectedAccountId: "ca_1",
           config: {},
           disabled: false,
@@ -158,7 +158,7 @@ describe("planComposioReconciliation", () => {
       [
         {
           id: "ti_orphan",
-          triggerSlug: "GITHUB_STAR_ADDED",
+          triggerSlug: "GITHUB_STAR_ADDED_EVENT",
           connectedAccountId: "ca_1",
           config: {},
           disabled: false,
@@ -181,7 +181,7 @@ describe("planComposioReconciliation", () => {
       {
         kind: "create",
         workflowId: "wf_1",
-        triggerSlug: "GITHUB_STAR_ADDED",
+        triggerSlug: "GITHUB_STAR_ADDED_EVENT",
         connectedAccountId: "ca_1",
         config: { owner: "acme", repo: "widgets" },
       },
@@ -194,7 +194,7 @@ describe("planComposioReconciliation", () => {
       [
         {
           id: "ti_1",
-          triggerSlug: "GITHUB_STAR_ADDED",
+          triggerSlug: "GITHUB_STAR_ADDED_EVENT",
           connectedAccountId: "ca_1",
           config: {},
           disabled: true,
@@ -225,7 +225,7 @@ describe("planComposioReconciliation", () => {
       [
         {
           id: "ti_b",
-          triggerSlug: "GITHUB_STAR_ADDED",
+          triggerSlug: "GITHUB_STAR_ADDED_EVENT",
           connectedAccountId: "ca_1",
           config: {},
           disabled: false,
