@@ -7,11 +7,18 @@
  */
 
 import type { Node, NodeType, WorkflowTrigger } from "@dafthunk/types";
+import { COMPOSIO_TRIGGER_NODE_TYPE } from "@dafthunk/types";
 
 /**
  * Node type(s) auto-added for each trigger. `manual` has none: a manual
  * workflow starts from input nodes. The two `*_request` triggers pair a trigger
  * with its responder; the edge between them is left to the author.
+ *
+ * `composio_event` has none either, for a different reason: every Composio
+ * trigger is one of 362 synthesised palette entries that pin a specific
+ * `triggerSlug`, and they all share one runtime type. Auto-adding by type would
+ * resolve to the unpinned generic node, which subscribes to nothing and leaves
+ * the workflow silently never firing — so the author picks a real one instead.
  */
 const TRIGGER_TO_NODE_TYPES: Record<WorkflowTrigger, string[]> = {
   manual: [],
@@ -26,14 +33,22 @@ const TRIGGER_TO_NODE_TYPES: Record<WorkflowTrigger, string[]> = {
   telegram_event: ["receive-telegram-message"],
   whatsapp_event: ["receive-whatsapp-message"],
   slack_event: ["receive-slack-message"],
+  composio_event: [],
 };
 
 export { TRIGGER_TO_NODE_TYPES };
 
-/** All node type IDs that are trigger nodes. */
-export const ALL_TRIGGER_NODE_TYPE_IDS: ReadonlySet<string> = new Set(
-  Object.values(TRIGGER_TO_NODE_TYPES).flat()
-);
+/**
+ * All node type IDs that are trigger nodes.
+ *
+ * The Composio type is added explicitly because it is deliberately absent from
+ * the auto-add map above: nothing inserts it, but the editor must still
+ * recognise one dropped from the palette as the workflow's trigger node.
+ */
+export const ALL_TRIGGER_NODE_TYPE_IDS: ReadonlySet<string> = new Set([
+  ...Object.values(TRIGGER_TO_NODE_TYPES).flat(),
+  COMPOSIO_TRIGGER_NODE_TYPE,
+]);
 
 /** Returns the node type IDs to add for a given trigger type. */
 export function getTriggerNodeTypes(trigger: WorkflowTrigger): string[] {

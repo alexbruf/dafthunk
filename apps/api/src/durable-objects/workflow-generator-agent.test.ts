@@ -47,45 +47,43 @@ async function connect(
   return { socket, frames };
 }
 
-/** Lets the microtask queue drain, then yields to the event loop once. */
-async function tick(): Promise<void> {
-  for (let i = 0; i < 10; i++) await Promise.resolve();
-  await scheduler.wait(10);
-}
-
 /**
- * Waits for an observable condition rather than a fixed delay.
+ * Waits until the socket has delivered whatever the assertion needs.
  *
- * A flat 50ms sleep was enough when this file ran alone and not enough under
- * full-suite load, so a different case failed on roughly every other run.
- * Polling makes the wait scale with how long delivery actually takes.
+ * Frames arrive asynchronously, and a fixed pause is the wrong tool: it passed
+ * when this file ran alone and failed when the four workspace suites ran in
+ * parallel, because the delivery just missed the deadline under CPU contention.
+ * That reads as a product bug and costs a re-run to classify, so poll for the
+ * condition instead and let the deadline be generous.
+ *
+ * On timeout this returns rather than throwing, so the assertion that follows
+ * reports the actual state — a useful diff beats "settleUntil timed out".
  */
-async function until(
+async function settleUntil(
   predicate: () => boolean,
-  what: string,
-  timeoutMs = 5000
+  timeoutMs = 3000
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   do {
-    await tick();
+    // Drain microtasks first: most frames are already queued and this avoids
+    // paying the polling interval in the common case.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
     if (predicate()) return;
+    await scheduler.wait(10);
   } while (Date.now() < deadline);
-  throw new Error(`Timed out after ${timeoutMs}ms waiting for ${what}`);
 }
 
-/**
- * Waits for frame delivery to stop, for assertions that nothing *more* arrives.
- * Two consecutive stable polls, so a frame in flight is not mistaken for quiet.
- */
-async function quiesce(frames: GeneratorServerMessage[]): Promise<void> {
-  let stable = 0;
-  let last = -1;
-  while (stable < 2) {
-    await tick();
-    stable = frames.length === last ? stable + 1 : 0;
-    last = frames.length;
-  }
+/** Settles the event loop where there is no positive condition to wait on. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  await scheduler.wait(50);
 }
+
+const hasError = (frames: GeneratorServerMessage[]): boolean =>
+  frames.some((f) => f.type === "error");
+
+const errorCount = (frames: GeneratorServerMessage[]): number =>
+  frames.filter((f) => f.type === "error").length;
 
 describe("WorkflowGeneratorAgent", () => {
   it("sends a session frame on connect", async () => {
@@ -94,7 +92,7 @@ describe("WorkflowGeneratorAgent", () => {
       "X-Organization-Id": "org-1",
     });
 
-    await until(() => frames.length > 0, "the session frame");
+    await settleUntil(() => frames.length > 0);
 
     expect(frames[0]).toMatchObject({
       type: "session",
@@ -114,7 +112,7 @@ describe("WorkflowGeneratorAgent", () => {
       closeCode = event.code;
     });
 
-    await until(() => closeCode !== undefined, "the socket to close");
+    await settleUntil(() => closeCode !== undefined);
 
     expect(closeCode).toBe(1008);
   });
@@ -130,10 +128,9 @@ describe("WorkflowGeneratorAgent", () => {
       closeCode = event.code;
     });
 
-    // The session frame proves the connection is live before anything is sent.
-    await until(() => frames.length > 0, "the session frame");
+    await settleUntil(() => frames.length > 0);
     socket.send("not json");
-    await until(() => closeCode !== undefined, "the socket to close");
+    await settleUntil(() => closeCode !== undefined);
 
     expect(closeCode).toBe(1003);
   });
@@ -147,12 +144,9 @@ describe("WorkflowGeneratorAgent", () => {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-missing",
     });
-    await until(() => first.frames.length > 0, "the session frame");
+    await settleUntil(() => first.frames.length > 0);
     first.socket.send(JSON.stringify({ type: "start", prompt: "summarize" }));
-    await until(
-      () => first.frames.some((f) => f.type === "error"),
-      "the run to fail"
-    );
+    await settleUntil(() => hasError(first.frames));
 
     const errorFrame = first.frames.find((f) => f.type === "error");
     expect(errorFrame).toBeDefined();
@@ -162,10 +156,7 @@ describe("WorkflowGeneratorAgent", () => {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-missing",
     });
-    await until(
-      () => second.frames.some((f) => f.type === "error"),
-      "the frame log to replay"
-    );
+    await settleUntil(() => hasError(second.frames));
 
     // Fresh session frame, then the replayed log including the error.
     expect(second.frames.some((f) => f.type === "error")).toBe(true);
@@ -179,16 +170,11 @@ describe("WorkflowGeneratorAgent", () => {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-missing",
     });
-    await until(() => first.frames.length > 0, "the session frame");
+    await settleUntil(() => first.frames.length > 0);
     first.socket.send(
       JSON.stringify({ type: "start", prompt: "summarize my emails" })
     );
-    // The run has to be claimed — that is what records the prompt — before the
-    // resumed connection can report it back.
-    await until(
-      () => first.frames.some((f) => f.type === "error"),
-      "the run to be claimed and fail"
-    );
+    await settleUntil(() => hasError(first.frames));
     first.socket.close();
 
     // A fresh connection is what resuming from a URL looks like.
@@ -196,7 +182,7 @@ describe("WorkflowGeneratorAgent", () => {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-missing",
     });
-    await until(() => resumed.frames.length > 0, "the session frame");
+    await settleUntil(() => resumed.frames.length > 0);
 
     expect(resumed.frames[0]).toMatchObject({
       type: "session",
@@ -211,24 +197,20 @@ describe("WorkflowGeneratorAgent", () => {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-missing",
     });
-    await until(() => first.frames.length > 0, "the session frame");
+    await settleUntil(() => first.frames.length > 0);
     first.socket.send(JSON.stringify({ type: "start", prompt: "summarize" }));
-    await until(
-      () => first.frames.some((f) => f.type === "error"),
-      "the first run to fail"
-    );
-    const afterFirst = first.frames.filter((f) => f.type === "error").length;
+    await settleUntil(() => hasError(first.frames));
+    const afterFirst = errorCount(first.frames);
 
     first.socket.send(JSON.stringify({ type: "start", prompt: "summarize" }));
-    // Asserting on what does *not* happen, so wait for delivery to go quiet
-    // rather than for a frame that should never arrive.
-    await quiesce(first.frames);
+    // The replayed error may or may not add a frame; wait for the growth we
+    // expect, then fall through so the assertion below judges the real state.
+    await settleUntil(() => errorCount(first.frames) > afterFirst);
+    await settle();
 
     // The second start replays rather than generating again, so the error is
     // re-sent from the log but no new run is claimed.
-    expect(
-      first.frames.filter((f) => f.type === "error").length
-    ).toBeGreaterThanOrEqual(afterFirst);
+    expect(errorCount(first.frames)).toBeGreaterThanOrEqual(afterFirst);
     expect(first.frames.filter((f) => f.type === "session")).toHaveLength(1);
   });
 });

@@ -4,6 +4,7 @@ export * from "./billing";
 export * from "./bot";
 export * from "./cloudflare";
 export * from "./cloudflare-gateway";
+export * from "./composio";
 export * from "./dashboard";
 export * from "./database";
 export * from "./dataset";

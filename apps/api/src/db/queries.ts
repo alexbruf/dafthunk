@@ -15,6 +15,7 @@ import {
   type BotTriggerRow,
   bots,
   botTriggers,
+  composioTriggers,
   createDatabase,
   type DatabaseInsert,
   type DatabaseRow,
@@ -1341,6 +1342,100 @@ export async function upsertBotTrigger(
     .returning();
 
   return result;
+}
+
+/**
+ * Candidate workflows for one Composio trigger instance.
+ *
+ * Returns rows in whatever state they are stored in — including inactive ones —
+ * because the webhook's `selectTriggerTargets` owns every routing decision.
+ * Keeping the filtering out of SQL is what makes that decision testable: the
+ * test-pool D1 has no schema.
+ */
+/**
+ * Every Composio trigger row paired with the integration it subscribes as.
+ *
+ * Reconciliation is global rather than per-organization because Composio's
+ * trigger-instance listing is project-wide: one pass sees every instance, so it
+ * can spot orphans that no organization's rows claim.
+ */
+/**
+ * Records the subscription a saved workflow wants. The reconciler works from
+ * these rows, so a Composio-triggered workflow that never writes one silently
+ * never fires.
+ *
+ * `instanceId` is deliberately left alone on conflict: it is owned by the
+ * reconciler, and clobbering it here would orphan the live subscription and
+ * make the next pass create a second one.
+ */
+export async function upsertComposioTrigger(
+  db: ReturnType<typeof createDatabase>,
+  values: {
+    workflowId: string;
+    organizationId: string;
+    integrationId: string | null;
+    triggerSlug: string;
+    config: string;
+    active: boolean;
+  }
+) {
+  return db
+    .insert(composioTriggers)
+    .values({ ...values, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: composioTriggers.workflowId,
+      set: {
+        integrationId: values.integrationId,
+        triggerSlug: values.triggerSlug,
+        config: values.config,
+        active: values.active,
+        updatedAt: new Date(),
+      },
+    });
+}
+
+/**
+ * Marks the row inactive rather than deleting it, so the reconciler still sees
+ * the instance id it has to remove upstream. Deleting here would strand the
+ * subscription, which would go on billing and delivering forever.
+ */
+export async function deactivateComposioTrigger(
+  db: ReturnType<typeof createDatabase>,
+  workflowId: string
+) {
+  return db
+    .update(composioTriggers)
+    .set({ active: false, updatedAt: new Date() })
+    .where(eq(composioTriggers.workflowId, workflowId));
+}
+
+export async function getAllComposioTriggersWithIntegration(
+  db: ReturnType<typeof createDatabase>
+) {
+  return db
+    .select({
+      composioTrigger: composioTriggers,
+      integration: integrations,
+    })
+    .from(composioTriggers)
+    .leftJoin(
+      integrations,
+      eq(composioTriggers.integrationId, integrations.id)
+    );
+}
+
+export async function getComposioTriggersByInstanceId(
+  db: ReturnType<typeof createDatabase>,
+  instanceId: string
+) {
+  return db
+    .select({
+      composioTrigger: composioTriggers,
+      workflow: workflows,
+    })
+    .from(composioTriggers)
+    .innerJoin(workflows, eq(composioTriggers.workflowId, workflows.id))
+    .where(eq(composioTriggers.instanceId, instanceId));
 }
 
 export async function updateBotTriggerMetadataByBot(
