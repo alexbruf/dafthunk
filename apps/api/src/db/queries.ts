@@ -1352,6 +1352,28 @@ export async function upsertBotTrigger(
  * Keeping the filtering out of SQL is what makes that decision testable: the
  * test-pool D1 has no schema.
  */
+/**
+ * Every Composio trigger row paired with the integration it subscribes as.
+ *
+ * Reconciliation is global rather than per-organization because Composio's
+ * trigger-instance listing is project-wide: one pass sees every instance, so it
+ * can spot orphans that no organization's rows claim.
+ */
+export async function getAllComposioTriggersWithIntegration(
+  db: ReturnType<typeof createDatabase>
+) {
+  return db
+    .select({
+      composioTrigger: composioTriggers,
+      integration: integrations,
+    })
+    .from(composioTriggers)
+    .leftJoin(
+      integrations,
+      eq(composioTriggers.integrationId, integrations.id)
+    );
+}
+
 export async function getComposioTriggersByInstanceId(
   db: ReturnType<typeof createDatabase>,
   instanceId: string

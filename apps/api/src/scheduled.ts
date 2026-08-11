@@ -8,6 +8,7 @@ import {
 } from "./db";
 import { getAgentByName } from "./durable-objects/agent-utils";
 import { createWorkerRuntime } from "./runtime/cloudflare-worker-runtime";
+import { runComposioReconciliation } from "./runtime/composio-reconcile-run";
 import { WorkflowStore } from "./stores/workflow-store";
 import { creditChecksEnabled } from "./utils/credits";
 
@@ -17,6 +18,23 @@ export async function handleScheduledEvent(
   _ctx: ExecutionContext
 ): Promise<void> {
   console.log("Scheduled event triggered at:", new Date().toISOString());
+
+  // The cron fires every minute, but reconciliation reads Composio's whole
+  // trigger-instance list, so it runs on a slower beat. Five minutes is well
+  // inside the window where a newly saved trigger still feels immediate, and it
+  // keeps a project-wide listing off the per-minute path.
+  const minute = new Date(_event.scheduledTime).getUTCMinutes();
+  if (minute % 5 === 0) {
+    try {
+      await runComposioReconciliation(env);
+    } catch (error) {
+      // Never let this starve the scheduled workflows below.
+      console.error(
+        "[ComposioReconcile] Pass failed:",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
 
   const db = createDatabase(env.DB);
   const workflowStore = new WorkflowStore(env);
