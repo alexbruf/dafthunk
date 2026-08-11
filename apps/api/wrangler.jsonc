@@ -275,8 +275,8 @@
     "SEND_EMAIL_FROM": "noreply@mail.dafthunk.com",
     // Cloudflare Access identity: set on the Access application that protects
     // the machine API surface (see spec §3.4). Placeholders until wired up.
-    "ACCESS_TEAM_DOMAIN": "CHANGE_ME.cloudflareaccess.com",
-    "ACCESS_AUD": "CHANGE_ME",
+    "ACCESS_TEAM_DOMAIN": "alexthecomputer1.cloudflareaccess.com",
+    "ACCESS_AUD": "85d4da8f7fa8dd7d59809d1a5462881a8c1655cd3a6035dba02b77dcc490f0d8",
     "SUPPORT_EMAIL_HANDLE": "bertil",
     "SUPPORT_EMAIL_FROM": "bertil@dafthunk.com",
     // Placeholder for the future AutoRAG instance over the INBOXES bucket;
@@ -514,8 +514,8 @@
         "SEND_EMAIL_FROM": "noreply@mail.dafthunk.com",
         // Cloudflare Access identity: set on the Access application that protects
         // the machine API surface (see spec §3.4). Placeholders until wired up.
-        "ACCESS_TEAM_DOMAIN": "CHANGE_ME.cloudflareaccess.com",
-        "ACCESS_AUD": "CHANGE_ME",
+        "ACCESS_TEAM_DOMAIN": "alexthecomputer1.cloudflareaccess.com",
+        "ACCESS_AUD": "85d4da8f7fa8dd7d59809d1a5462881a8c1655cd3a6035dba02b77dcc490f0d8",
         "SUPPORT_EMAIL_HANDLE": "bertil",
         "SUPPORT_EMAIL_FROM": "bertil@dafthunk.com",
         // Placeholder for the future AutoRAG instance over the INBOXES bucket;
