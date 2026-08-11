@@ -29,6 +29,9 @@ export const DRAFT_SCHEMA = {
         "telegram_event",
         "whatsapp_event",
         "slack_event",
+        // "composio_event" is intentionally not offered: the generator cannot
+        // pin a trigger slug, and an unpinned Composio trigger subscribes to
+        // nothing. See the note in hydrate.ts.
       ],
     },
     steps: {

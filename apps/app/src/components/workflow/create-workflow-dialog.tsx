@@ -10,6 +10,7 @@ import Mail from "lucide-react/icons/mail";
 import MessageCircle from "lucide-react/icons/message-circle";
 import MessageSquare from "lucide-react/icons/message-square";
 import Play from "lucide-react/icons/play";
+import Plug from "lucide-react/icons/plug";
 import Send from "lucide-react/icons/send";
 import Webhook from "lucide-react/icons/webhook";
 import Zap from "lucide-react/icons/zap";
@@ -100,7 +101,18 @@ const workflowTriggers = [
     description: "Trigger workflows from Slack messages",
     icon: Hash,
   },
+  {
+    trigger: "composio_event" as WorkflowTrigger,
+    title: "Composio Event",
+    description: "Trigger workflows from any connected Composio app",
+    icon: Plug,
+  },
 ];
+
+// Exported so a test can hold this list to every WorkflowTrigger. The array is
+// untyped literals, so the compiler cannot catch a trigger that is added to the
+// union and forgotten here — which is exactly what happened to Composio.
+export { workflowTriggers };
 
 const runtimeTypes = [
   {
