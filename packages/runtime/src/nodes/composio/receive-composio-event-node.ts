@@ -88,7 +88,16 @@ export class ReceiveComposioEventNode extends ExecutableNode {
         context.composioEvent;
 
       return this.createSuccessResult({
+        // The synthesised palette entry for each trigger declares one output per
+        // field of that trigger's payload schema, so the fields are spread to
+        // the top level to fill them. The runtime persists only declared
+        // outputs, so emitting just the object below left every one of those
+        // empty and dropped the object itself for having no declaration.
+        ...payload,
+        // Kept whole for the generic base node, whose single output is this.
         payload,
+        // Last on purpose: a provider is free to send a field called
+        // `triggerSlug`, and routing metadata has to win over payload content.
         triggerSlug,
         toolkitSlug,
         eventId,

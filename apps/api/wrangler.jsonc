@@ -773,6 +773,12 @@
         ]
       },
       "vars": {
+        // Must be "production": the Analytics Engine binding below writes to the
+        // _production dataset, while the execution store picks the dataset it
+        // READS from this value, defaulting to _development. Leaving it unset
+        // sent every execution to one dataset and every query to the other, so
+        // the executions list was permanently empty.
+        "CLOUDFLARE_ENV": "production",
         // Cloudflare Access identity for the MCP route. Set on the Access
         // application that fronts daft-mcp.clanqi.org; the middleware verifies
         // the Access JWT against this team domain and audience.
