@@ -309,3 +309,181 @@ describe("ComposioClient", () => {
     });
   });
 });
+
+describe("ComposioClient connections", () => {
+  it("lists toolkits with a search term", async () => {
+    const { impl, calls } = stubFetch([
+      {
+        status: 200,
+        body: {
+          items: [
+            {
+              slug: "gmail",
+              name: "Gmail",
+              no_auth: false,
+              composio_managed_auth_schemes: ["OAUTH2"],
+              meta: { description: "Email", logo: "https://logo" },
+            },
+          ],
+        },
+      },
+    ]);
+    const toolkits = await client(impl).listToolkits({
+      search: "mail",
+      limit: 50,
+    });
+
+    const url = new URL(calls[0].url);
+    expect(url.pathname).toContain("/toolkits");
+    expect(url.searchParams.get("search")).toBe("mail");
+    expect(url.searchParams.get("limit")).toBe("50");
+    expect(toolkits[0]).toMatchObject({
+      slug: "gmail",
+      name: "Gmail",
+      managedAuthSchemes: ["OAUTH2"],
+    });
+  });
+
+  it("finds an existing auth config for a toolkit", async () => {
+    const { impl, calls } = stubFetch([
+      {
+        status: 200,
+        body: {
+          items: [
+            { id: "ac_1", status: "ENABLED", toolkit: { slug: "gmail" } },
+          ],
+        },
+      },
+    ]);
+    const id = await client(impl).findAuthConfig("gmail");
+
+    expect(new URL(calls[0].url).searchParams.get("toolkit_slug")).toBe(
+      "gmail"
+    );
+    expect(id).toBe("ac_1");
+  });
+
+  it("returns null when a toolkit has no auth config yet", async () => {
+    const { impl } = stubFetch([{ status: 200, body: { items: [] } }]);
+    expect(await client(impl).findAuthConfig("gmail")).toBeNull();
+  });
+
+  // Verified against the live API: `toolkit_slug` filters correctly for a known
+  // slug, but an UNRECOGNISED one is silently dropped and every auth config is
+  // returned. Trusting the first row would connect the user to another service.
+  it("refuses a config belonging to a different toolkit", async () => {
+    const { impl } = stubFetch([
+      {
+        status: 200,
+        body: { items: [{ id: "ac_gmail", toolkit: { slug: "gmail" } }] },
+      },
+    ]);
+    expect(await client(impl).findAuthConfig("zzz-not-a-toolkit")).toBeNull();
+  });
+
+  it("picks the matching toolkit out of an unfiltered list", async () => {
+    const { impl } = stubFetch([
+      {
+        status: 200,
+        body: {
+          items: [
+            { id: "ac_gmail", toolkit: { slug: "gmail" } },
+            { id: "ac_slack", toolkit: { slug: "slack" } },
+          ],
+        },
+      },
+    ]);
+    expect(await client(impl).findAuthConfig("slack")).toBe("ac_slack");
+  });
+
+  it("trusts a lone result stating no toolkit, but never a list", async () => {
+    const single = stubFetch([
+      { status: 200, body: { items: [{ id: "ac_1" }] } },
+    ]);
+    expect(await client(single.impl).findAuthConfig("gmail")).toBe("ac_1");
+
+    const many = stubFetch([
+      { status: 200, body: { items: [{ id: "ac_1" }, { id: "ac_2" }] } },
+    ]);
+    expect(await client(many.impl).findAuthConfig("gmail")).toBeNull();
+  });
+
+  it("creates a Composio-managed auth config", async () => {
+    const { impl, calls } = stubFetch([
+      { status: 200, body: { auth_config: { id: "ac_new" } } },
+    ]);
+    const id = await client(impl).createAuthConfig("gmail", "dafthunk-gmail");
+
+    expect(calls[0].init.method).toBe("POST");
+    const sent = JSON.parse(String(calls[0].init.body));
+    // Composio-managed auth is what makes this possible at all: Dafthunk holds
+    // no client credentials for the toolkits Composio brokers.
+    expect(sent.auth_config.type).toBe("use_composio_managed_auth");
+    expect(sent.toolkit.slug).toBe("gmail");
+    expect(id).toBe("ac_new");
+  });
+
+  it("creates an auth link session carrying the callback url", async () => {
+    const { impl, calls } = stubFetch([
+      {
+        status: 200,
+        body: {
+          redirect_url: "https://auth.composio/x",
+          connected_account_id: "ca_1",
+        },
+      },
+    ]);
+    const link = await client(impl).createConnectedAccountLink({
+      authConfigId: "ac_1",
+      userId: "org_42",
+      callbackUrl: "https://dafthunk.test/composio/callback",
+    });
+
+    expect(calls[0].url).toContain("/connected_accounts/link");
+    const sent = JSON.parse(String(calls[0].init.body));
+    expect(sent).toEqual({
+      auth_config_id: "ac_1",
+      user_id: "org_42",
+      callback_url: "https://dafthunk.test/composio/callback",
+    });
+    expect(link.redirectUrl).toBe("https://auth.composio/x");
+    expect(link.connectedAccountId).toBe("ca_1");
+  });
+
+  it("reads the fields the cross-tenant guard depends on", async () => {
+    const { impl } = stubFetch([
+      {
+        status: 200,
+        body: {
+          id: "ca_1",
+          status: "ACTIVE",
+          user_id: "org_42",
+          toolkit: { slug: "gmail" },
+          auth_config: { id: "ac_1" },
+        },
+      },
+    ]);
+    const account = await client(impl).getConnectedAccount("ca_1");
+
+    // userId is what proves the callback belongs to the org that started it.
+    expect(account).toEqual({
+      id: "ca_1",
+      status: "ACTIVE",
+      userId: "org_42",
+      toolkitSlug: "gmail",
+      authConfigId: "ac_1",
+    });
+  });
+
+  it("surfaces a missing connected account as a typed error", async () => {
+    const { impl } = stubFetch([
+      { status: 404, body: { error: { message: "not found", status: 404 } } },
+    ]);
+    const err = await client(impl)
+      .getConnectedAccount("ca_missing")
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(ComposioApiError);
+    expect(err.status).toBe(404);
+  });
+});

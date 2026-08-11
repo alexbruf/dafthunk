@@ -124,6 +124,75 @@ const webhookSubscriptionSchema = z.object({
   secret: z.string(),
 });
 
+/**
+ * Connection-side schemas. These back the connect flow: Dafthunk holds no
+ * client credentials for the toolkits Composio brokers, so an auth config is
+ * created once per toolkit using Composio-managed auth and reused thereafter.
+ */
+const toolkitListSchema = z.object({
+  items: z.array(
+    z.object({
+      slug: z.string(),
+      name: z.string(),
+      no_auth: z.boolean().default(false),
+      composio_managed_auth_schemes: z.array(z.string()).default([]),
+      meta: z
+        .object({
+          description: z.string().default(""),
+          logo: z.string().default(""),
+        })
+        .partial()
+        .default({}),
+    })
+  ),
+});
+
+const authConfigListSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      status: z.string().optional(),
+      toolkit: z.object({ slug: z.string() }).optional(),
+    })
+  ),
+});
+
+const authConfigCreatedSchema = z.object({
+  auth_config: z.object({ id: z.string() }),
+});
+
+const connectedAccountLinkSchema = z.object({
+  redirect_url: z.string(),
+  connected_account_id: z.string().optional(),
+});
+
+const connectedAccountSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  user_id: z.string().optional(),
+  toolkit: z.object({ slug: z.string() }).optional(),
+  auth_config: z.object({ id: z.string() }).optional(),
+});
+
+export interface ComposioToolkitSummary {
+  slug: string;
+  name: string;
+  description: string;
+  logo: string;
+  noAuth: boolean;
+  managedAuthSchemes: string[];
+}
+
+/** The subset of `GET /connected_accounts/{id}` the connect flow depends on. */
+export interface ComposioConnectedAccount {
+  id: string;
+  status: string;
+  /** Composio's `user_id`, which Dafthunk sets to the organization id. */
+  userId?: string;
+  toolkitSlug?: string;
+  authConfigId?: string;
+}
+
 const page = <T extends z.ZodTypeAny>(item: T) =>
   z.object({
     items: z.array(item),
@@ -344,6 +413,109 @@ export class ComposioClient {
       id: parsed.id,
       secret: parsed.secret,
       webhookUrl: parsed.webhook_url,
+    };
+  }
+
+  async listToolkits(
+    options: { search?: string; limit?: number } = {}
+  ): Promise<ComposioToolkitSummary[]> {
+    const query = new URLSearchParams();
+    if (options.search) query.set("search", options.search);
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+
+    const body = await this.request("/toolkits", { query });
+    const parsed = this.parse(toolkitListSchema, body, "/toolkits");
+    return parsed.items.map((item) => ({
+      slug: item.slug,
+      name: item.name,
+      description: item.meta.description ?? "",
+      logo: item.meta.logo ?? "",
+      noAuth: item.no_auth,
+      managedAuthSchemes: item.composio_managed_auth_schemes,
+    }));
+  }
+
+  /**
+   * Auth configs are per-toolkit and reusable, so the first org to connect a
+   * toolkit creates one and every org after reuses it.
+   *
+   * The result is re-checked against the toolkit that was asked for because
+   * the upstream filter FAILS OPEN: `toolkit_slug=gmail` filters correctly and
+   * an unmatched-but-valid slug returns nothing, but an unrecognised slug (a
+   * typo, or a toolkit renamed upstream) is silently ignored and every auth
+   * config comes back. Trusting the first row would then hand out some other
+   * toolkit's config and connect the user to the wrong service.
+   */
+  async findAuthConfig(toolkitSlug: string): Promise<string | null> {
+    const query = new URLSearchParams({
+      toolkit_slug: toolkitSlug,
+      limit: "50",
+    });
+    const body = await this.request("/auth_configs", { query });
+    const parsed = this.parse(authConfigListSchema, body, "/auth_configs");
+
+    const wanted = toolkitSlug.toLowerCase();
+    const match = parsed.items.find(
+      (item) => item.toolkit?.slug?.toLowerCase() === wanted
+    );
+    if (match) return match.id;
+
+    // No row states its toolkit at all: an older response shape. Only trust a
+    // single unambiguous result, never a pick from a list we cannot verify.
+    if (parsed.items.length === 1 && !parsed.items[0].toolkit) {
+      return parsed.items[0].id;
+    }
+    return null;
+  }
+
+  async createAuthConfig(toolkitSlug: string, name: string): Promise<string> {
+    const body = await this.request("/auth_configs", {
+      method: "POST",
+      body: {
+        toolkit: { slug: toolkitSlug },
+        auth_config: { type: "use_composio_managed_auth", name },
+      },
+    });
+    const parsed = this.parse(authConfigCreatedSchema, body, "/auth_configs");
+    return parsed.auth_config.id;
+  }
+
+  async createConnectedAccountLink(options: {
+    authConfigId: string;
+    userId: string;
+    callbackUrl: string;
+  }): Promise<{ redirectUrl: string; connectedAccountId?: string }> {
+    const body = await this.request("/connected_accounts/link", {
+      method: "POST",
+      body: {
+        auth_config_id: options.authConfigId,
+        user_id: options.userId,
+        callback_url: options.callbackUrl,
+      },
+    });
+    const parsed = this.parse(
+      connectedAccountLinkSchema,
+      body,
+      "/connected_accounts/link"
+    );
+    return {
+      redirectUrl: parsed.redirect_url,
+      connectedAccountId: parsed.connected_account_id,
+    };
+  }
+
+  async getConnectedAccount(
+    connectedAccountId: string
+  ): Promise<ComposioConnectedAccount> {
+    const path = `/connected_accounts/${encodeURIComponent(connectedAccountId)}`;
+    const body = await this.request(path);
+    const parsed = this.parse(connectedAccountSchema, body, path);
+    return {
+      id: parsed.id,
+      status: parsed.status,
+      userId: parsed.user_id,
+      toolkitSlug: parsed.toolkit?.slug,
+      authConfigId: parsed.auth_config?.id,
     };
   }
 

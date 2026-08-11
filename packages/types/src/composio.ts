@@ -73,3 +73,21 @@ export interface ComposioEvent {
   /** The upstream provider's event body. */
   payload: Record<string, unknown>;
 }
+
+/**
+ * A toolkit offered in the connect picker.
+ *
+ * Only toolkits with Composio-managed auth are offered, because those are the
+ * ones a connection can be brokered for without Dafthunk owning any client
+ * credentials — so the list is narrower than Composio's full catalog.
+ */
+export interface ComposioToolkitOption {
+  slug: string;
+  name: string;
+  description: string;
+  logo: string;
+}
+
+export interface ListComposioToolkitsResponse {
+  toolkits: ComposioToolkitOption[];
+}

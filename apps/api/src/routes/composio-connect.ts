@@ -1,7 +1,9 @@
-import {
-  COMPOSIO_API_BASE,
-  ComposioApiError,
-} from "@dafthunk/runtime/utils/composio-client";
+import type { ComposioConnectedAccount } from "@dafthunk/runtime/utils/composio-client";
+import { ComposioClient } from "@dafthunk/runtime/utils/composio-client";
+
+export type { ComposioConnectedAccount };
+
+import type { ListComposioToolkitsResponse } from "@dafthunk/types";
 import { zValidator } from "@hono/zod-validator";
 import { and, eq } from "drizzle-orm";
 import type { Context } from "hono";
@@ -202,16 +204,6 @@ export async function verifyComposioState(
 // Callback decision
 // ============================================================================
 
-/** The subset of `GET /connected_accounts/{id}` this flow depends on. */
-export interface ComposioConnectedAccount {
-  id: string;
-  status: string;
-  /** Composio's `user_id`, which Dafthunk sets to the organization id. */
-  userId?: string;
-  toolkitSlug?: string;
-  authConfigId?: string;
-}
-
 export interface ComposioIntegrationRecord {
   organizationId: string;
   name: string;
@@ -315,123 +307,26 @@ export function requireComposioApiKey(env: Pick<Bindings, "COMPOSIO_API_KEY">) {
  * owned elsewhere — so these three requests live here, reusing the client's
  * base URL and error type so failures surface as one recognisable error.
  */
-async function composioRequest(
-  apiKey: string,
-  path: string,
-  options: { method?: string; query?: URLSearchParams; body?: unknown } = {}
-): Promise<unknown> {
-  const query = options.query?.toString();
-  const response = await fetch(
-    `${COMPOSIO_API_BASE}${path}${query ? `?${query}` : ""}`,
-    {
-      method: options.method ?? "GET",
-      headers: {
-        "x-api-key": apiKey,
-        "content-type": "application/json",
-      },
-      ...(options.body === undefined
-        ? {}
-        : { body: JSON.stringify(options.body) }),
-    }
-  );
-
-  const text = await response.text();
-  if (!response.ok) {
-    throw new ComposioApiError(
-      `Request to ${path} failed with ${response.status}: ${text}`,
-      response.status
-    );
-  }
-  return text ? JSON.parse(text) : {};
-}
-
-const toolkitListSchema = z.object({
-  items: z.array(
-    z.object({
-      slug: z.string(),
-      name: z.string(),
-      no_auth: z.boolean().default(false),
-      composio_managed_auth_schemes: z.array(z.string()).default([]),
-      meta: z
-        .object({
-          description: z.string().default(""),
-          logo: z.string().default(""),
-        })
-        .partial()
-        .default({}),
-    })
-  ),
-});
-
-const authConfigListSchema = z.object({
-  items: z.array(z.object({ id: z.string(), status: z.string().optional() })),
-});
-
-const authConfigCreatedSchema = z.object({
-  auth_config: z.object({ id: z.string() }),
-});
-
-const linkSchema = z.object({
-  redirect_url: z.string(),
-  connected_account_id: z.string().optional(),
-});
-
-const connectedAccountSchema = z.object({
-  id: z.string(),
-  status: z.string(),
-  user_id: z.string().optional(),
-  toolkit: z.object({ slug: z.string() }).optional(),
-  auth_config: z.object({ id: z.string() }).optional(),
-});
-
 /**
- * Auth configs are per-toolkit and reusable, so the first user to connect a
- * toolkit creates it and everyone after reuses it. Composio-managed auth is
+ * Auth configs are per-toolkit and reusable, so the first org to connect a
+ * toolkit creates one and every org after reuses it. Composio-managed auth is
  * what makes this possible at all — Dafthunk holds no client credentials.
  */
 async function ensureAuthConfig(
-  apiKey: string,
+  client: ComposioClient,
   toolkit: string
 ): Promise<string> {
-  const query = new URLSearchParams({ toolkit_slug: toolkit, limit: "1" });
-  const existing = authConfigListSchema.parse(
-    await composioRequest(apiKey, "/auth_configs", { query })
-  );
-  if (existing.items.length > 0) return existing.items[0].id;
-
-  const created = authConfigCreatedSchema.parse(
-    await composioRequest(apiKey, "/auth_configs", {
-      method: "POST",
-      body: {
-        toolkit: { slug: toolkit },
-        auth_config: {
-          type: "use_composio_managed_auth",
-          name: `dafthunk-${toolkit}`,
-        },
-      },
-    })
-  );
-  return created.auth_config.id;
+  const existing = await client.findAuthConfig(toolkit);
+  if (existing) return existing;
+  return client.createAuthConfig(toolkit, `dafthunk-${toolkit}`);
 }
 
 async function fetchConnectedAccount(
-  apiKey: string,
+  client: ComposioClient,
   connectedAccountId: string
 ): Promise<ComposioConnectedAccount | null> {
   try {
-    const account = connectedAccountSchema.parse(
-      await composioRequest(
-        apiKey,
-        `/connected_accounts/${encodeURIComponent(connectedAccountId)}`
-      )
-    );
-    return {
-      id: account.id,
-      status: account.status,
-      userId: account.user_id,
-      toolkitSlug: account.toolkit?.slug,
-      authConfigId: account.auth_config?.id,
-    };
+    return await client.getConnectedAccount(connectedAccountId);
   } catch (error) {
     console.error("Composio connected account lookup failed:", error);
     return null;
@@ -565,25 +460,21 @@ composioConnect.get(
       const apiKey = requireComposioApiKey(c.env);
       const { query, limit } = c.req.valid("query");
 
-      const search = new URLSearchParams({ limit: String(limit) });
-      if (query) search.set("search", query);
-
-      const body = toolkitListSchema.parse(
-        await composioRequest(apiKey, "/toolkits", { query: search })
-      );
+      const toolkits = await new ComposioClient({ apiKey }).listToolkits({
+        search: query,
+        limit,
+      });
 
       return c.json({
-        toolkits: body.items
-          .filter(
-            (item) => !item.no_auth && item.composio_managed_auth_schemes.length
-          )
+        toolkits: toolkits
+          .filter((item) => !item.noAuth && item.managedAuthSchemes.length > 0)
           .map((item) => ({
             slug: item.slug,
             name: item.name,
-            description: item.meta.description ?? "",
-            logo: item.meta.logo ?? "",
+            description: item.description,
+            logo: item.logo,
           })),
-      });
+      } satisfies ListComposioToolkitsResponse);
     } catch (error) {
       if (error instanceof ComposioConnectError) {
         return c.json({ error: error.message }, 503);
@@ -617,7 +508,8 @@ composioConnect.get(
         );
       }
 
-      const authConfigId = await ensureAuthConfig(apiKey, toolkit);
+      const client = new ComposioClient({ apiKey });
+      const authConfigId = await ensureAuthConfig(client, toolkit);
       const state = await signComposioState(
         {
           organizationId,
@@ -629,20 +521,15 @@ composioConnect.get(
         c.env.JWT_SECRET
       );
 
-      const link = linkSchema.parse(
-        await composioRequest(apiKey, "/connected_accounts/link", {
-          method: "POST",
-          body: {
-            auth_config_id: authConfigId,
-            // Composio's user is Dafthunk's organization: connections, and the
-            // trigger instances built on them, stay inside one tenant.
-            user_id: organizationId,
-            callback_url: callbackUrl(c.env, state),
-          },
-        })
-      );
+      const link = await client.createConnectedAccountLink({
+        authConfigId,
+        // Composio's user is Dafthunk's organization: connections, and the
+        // trigger instances built on them, stay inside one tenant.
+        userId: organizationId,
+        callbackUrl: callbackUrl(c.env, state),
+      });
 
-      return c.redirect(link.redirect_url);
+      return c.redirect(link.redirectUrl);
     } catch (error) {
       const code =
         error instanceof ComposioConnectError
@@ -685,7 +572,10 @@ composioConnect.get("/callback", async (c) => {
     const apiKey = requireComposioApiKey(c.env);
     const connectedAccountId = c.req.query("connected_account_id") ?? null;
     const account = connectedAccountId
-      ? await fetchConnectedAccount(apiKey, connectedAccountId)
+      ? await fetchConnectedAccount(
+          new ComposioClient({ apiKey }),
+          connectedAccountId
+        )
       : null;
 
     const db = createDatabase(c.env.DB);
