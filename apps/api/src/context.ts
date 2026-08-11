@@ -45,6 +45,12 @@ export interface Bindings {
   CLOUDFLARE_ACCOUNT_ID: string;
   CLOUDFLARE_API_TOKEN: string;
   CLOUDFLARE_AI_GATEWAY_ID?: string;
+  // Cloudflare Access identity: the Zero Trust team domain (e.g.
+  // acme.cloudflareaccess.com) and the AUD tag of the Access application
+  // protecting this API. Optional at the type level only so unrelated test
+  // fixtures can skip them; the middleware fails closed when absent.
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   GOOGLE_CLIENT_ID?: string;

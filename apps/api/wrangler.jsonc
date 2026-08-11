@@ -273,6 +273,10 @@
     "WEBSITE_URL": "https://www.dafthunk.com",
     "EMAIL_DOMAIN": "mail.dafthunk.com",
     "SEND_EMAIL_FROM": "noreply@mail.dafthunk.com",
+    // Cloudflare Access identity: set on the Access application that protects
+    // the machine API surface (see spec §3.4). Placeholders until wired up.
+    "ACCESS_TEAM_DOMAIN": "CHANGE_ME.cloudflareaccess.com",
+    "ACCESS_AUD": "CHANGE_ME",
     "SUPPORT_EMAIL_HANDLE": "bertil",
     "SUPPORT_EMAIL_FROM": "bertil@dafthunk.com",
     // Placeholder for the future AutoRAG instance over the INBOXES bucket;
@@ -508,6 +512,10 @@
         "WEBSITE_URL": "https://www.dafthunk.com",
         "EMAIL_DOMAIN": "mail.dafthunk.com",
         "SEND_EMAIL_FROM": "noreply@mail.dafthunk.com",
+        // Cloudflare Access identity: set on the Access application that protects
+        // the machine API surface (see spec §3.4). Placeholders until wired up.
+        "ACCESS_TEAM_DOMAIN": "CHANGE_ME.cloudflareaccess.com",
+        "ACCESS_AUD": "CHANGE_ME",
         "SUPPORT_EMAIL_HANDLE": "bertil",
         "SUPPORT_EMAIL_FROM": "bertil@dafthunk.com",
         // Placeholder for the future AutoRAG instance over the INBOXES bucket;
