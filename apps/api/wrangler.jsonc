@@ -551,7 +551,12 @@
     // AI Search (this account's token has no permission for it).
     "clanqi": {
       "name": "dafthunk-clanqi",
-      "routes": [{ "pattern": "daft.clanqi.org", "custom_domain": true }],
+      "routes": [
+        { "pattern": "daft.clanqi.org", "custom_domain": true },
+        // The MCP endpoint is the same Worker on its own hostname, so the
+        // Access application can front it without also gating the API.
+        { "pattern": "daft-mcp.clanqi.org", "custom_domain": true }
+      ],
       "compatibility_date": "2024-10-22",
       "observability": {
         "enabled": true,
@@ -768,6 +773,11 @@
         ]
       },
       "vars": {
+        // Cloudflare Access identity for the MCP route. Set on the Access
+        // application that fronts daft-mcp.clanqi.org; the middleware verifies
+        // the Access JWT against this team domain and audience.
+        "ACCESS_TEAM_DOMAIN": "alexthecomputer1.cloudflareaccess.com",
+        "ACCESS_AUD": "85d4da8f7fa8dd7d59809d1a5462881a8c1655cd3a6035dba02b77dcc490f0d8",
         "WEB_HOST": "https://app.daft.clanqi.org",
         "WEBSITE_URL": "https://daft.clanqi.org",
         "EMAIL_DOMAIN": "mail.dafthunk.com",
