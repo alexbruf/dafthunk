@@ -33,6 +33,7 @@ import type {
 import { eq } from "drizzle-orm";
 import type { MiddlewareHandler } from "hono";
 import {
+  decodeJwt,
   decodeProtectedHeader,
   importJWK,
   type JSONWebKeySet,
@@ -260,6 +261,28 @@ export function createAccessIdentityMiddleware(
           503
         );
       }
+      // A signature failure, an `aud` mismatch and an `iss` mismatch are one
+      // indistinguishable 401 to the caller, and this catch is the only place
+      // the reason exists. Without it, diagnosing a rejected assertion means
+      // guessing. Claims are decoded *unverified* and used for nothing but this
+      // line; the token and its signature are never logged.
+      let presented: JWTPayload | undefined;
+      try {
+        presented = decodeJwt(assertion);
+      } catch {
+        // Malformed token — the reason below still says so.
+      }
+      console.error("[access-identity] assertion rejected", {
+        reason: error instanceof Error ? error.message : String(error),
+        code:
+          error && typeof error === "object" && "code" in error
+            ? String((error as { code: unknown }).code)
+            : undefined,
+        presentedIss: presented?.iss,
+        presentedAud: presented?.aud,
+        expectedIss: issuer,
+        expectedAud: aud,
+      });
       return c.json({ error: ACCESS_IDENTITY_ERRORS.INVALID_ASSERTION }, 401);
     }
 
