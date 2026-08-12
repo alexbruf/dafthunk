@@ -207,6 +207,37 @@ describe("planComposioReconciliation", () => {
     ]);
   });
 
+  it("tears down the subscription when the connection is gone", () => {
+    // Deleting an integration nulls the row's integration_id (ON DELETE SET
+    // NULL) while the row keeps claiming its instance. Skipping such a row
+    // leaves a live upstream subscription bound to a deleted account that
+    // nothing will ever clean up, and the workflow wedged: it cannot
+    // re-subscribe and cannot release what it holds.
+    const plan = planComposioReconciliation(
+      [
+        row({
+          connectedAccountId: null,
+          integrationId: null,
+          instanceId: "ti_orphaned",
+        }),
+      ],
+      [
+        {
+          id: "ti_orphaned",
+          triggerSlug: "GITHUB_STAR_ADDED_EVENT",
+          connectedAccountId: "ca_deleted",
+          config: {},
+          disabled: false,
+        },
+      ]
+    );
+
+    // Carries the workflow id so the applier also clears the stale instance id.
+    expect(plan).toEqual([
+      { kind: "delete", workflowId: "wf_1", instanceId: "ti_orphaned" },
+    ]);
+  });
+
   it("skips a row with no connected account rather than guessing one", () => {
     // The integration was deleted (integration_id is ON DELETE SET NULL). There
     // is nothing to subscribe as, and picking another account would subscribe

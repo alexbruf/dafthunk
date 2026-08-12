@@ -66,3 +66,77 @@ describe("ReceiveComposioEventNode", () => {
     expect(ReceiveComposioEventNode.nodeType.trigger).toBe(true);
   });
 });
+
+describe("ReceiveComposioEventNode payload fan-out", () => {
+  /**
+   * The palette entry for a trigger declares one output per field of that
+   * trigger's payload schema — `comment_id`, `authors`, `data` and so on —
+   * because that is what makes a trigger wirable without a JSON-picking node in
+   * between. The runtime only persists declared outputs, so emitting a single
+   * `payload` object left every schema-derived output empty and dropped the
+   * object itself for having no matching declaration. The node ran green and
+   * produced nothing but the envelope fields.
+   *
+   * So the payload is spread across the top level AND kept whole: the
+   * synthesised entries read the spread fields, the generic base node reads
+   * `payload`.
+   */
+  const runWith = async (payload: Record<string, unknown>) => {
+    const node = new ReceiveComposioEventNode({
+      nodeId: "receive-composio-event",
+    } as unknown as Node);
+    return node.execute({
+      nodeId: "receive-composio-event",
+      inputs: {},
+      composioEvent: {
+        eventId: "msg_1",
+        type: "composio.trigger.message",
+        timestamp: "2026-08-11T00:00:00Z",
+        triggerInstanceId: "ti_1",
+        triggerSlug: "NOTION_COMMENT_CREATED",
+        toolkitSlug: "NOTION",
+        payload,
+      },
+      env: {},
+    } as unknown as NodeContext);
+  };
+
+  it("exposes each payload field as its own output", async () => {
+    const result = await runWith({
+      comment_id: "c1",
+      authors: [{ id: "u1" }],
+      data: { text: "hello" },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.outputs?.comment_id).toBe("c1");
+    expect(result.outputs?.authors).toEqual([{ id: "u1" }]);
+    expect(result.outputs?.data).toEqual({ text: "hello" });
+  });
+
+  it("still emits the whole payload for the generic node", async () => {
+    const result = await runWith({ comment_id: "c1" });
+    expect(result.outputs?.payload).toEqual({ comment_id: "c1" });
+  });
+
+  it("does not let a payload field shadow the envelope outputs", async () => {
+    // A provider is free to send a field called triggerSlug; routing metadata
+    // must win, or a downstream node reads the provider's value as ours.
+    const result = await runWith({
+      triggerSlug: "SPOOFED",
+      eventId: "spoofed",
+      comment_id: "c1",
+    });
+
+    expect(result.outputs?.triggerSlug).toBe("NOTION_COMMENT_CREATED");
+    expect(result.outputs?.eventId).toBe("msg_1");
+    expect(result.outputs?.comment_id).toBe("c1");
+  });
+
+  it("handles an empty payload without dropping the envelope", async () => {
+    const result = await runWith({});
+    expect(result.status).toBe("completed");
+    expect(result.outputs?.triggerSlug).toBe("NOTION_COMMENT_CREATED");
+    expect(result.outputs?.payload).toEqual({});
+  });
+});
