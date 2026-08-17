@@ -530,3 +530,119 @@ describe("ComposioClient default fetch binding", () => {
     expect(receivers[0]).not.toBeInstanceOf(ComposioClient);
   });
 });
+
+describe("ComposioClient rate limiting", () => {
+  /**
+   * 429 was the single largest cause of failed runs in production: Composio
+   * returns "Too many requests. Try again shortly." and the client treated it
+   * like any other 4xx — a decision, not a hiccup — so it threw immediately and
+   * the whole workflow died. It is the one 4xx that is worth waiting out.
+   */
+  const withSleep = (fetchImpl: typeof fetch, retries = 3) => {
+    const waits: number[] = [];
+    const client = new ComposioClient({
+      apiKey: "ak_test",
+      fetch: fetchImpl,
+      retries,
+      sleep: async (ms: number) => {
+        waits.push(ms);
+      },
+    });
+    return { client, waits };
+  };
+
+  const rateLimited = (headers?: Record<string, string>) => ({
+    status: 429,
+    body: {
+      error: { message: "Too many requests. Try again shortly.", status: 429 },
+    },
+    headers,
+  });
+
+  it("retries a 429 and succeeds", async () => {
+    const { impl, calls } = stubFetch([
+      rateLimited(),
+      { status: 200, body: TOOL },
+    ]);
+    const { client } = withSleep(impl);
+
+    const tool = await client.getTool("GITHUB_CREATE_AN_ISSUE");
+    expect(calls).toHaveLength(2);
+    expect(tool.slug).toBe("GITHUB_CREATE_AN_ISSUE");
+  });
+
+  it("waits the number of seconds Retry-After asks for", async () => {
+    const { impl } = stubFetch([
+      rateLimited({ "retry-after": "2" }),
+      { status: 200, body: TOOL },
+    ]);
+    const { client, waits } = withSleep(impl);
+
+    await client.getTool("X");
+    expect(waits).toEqual([2000]);
+  });
+
+  it("understands an HTTP-date Retry-After", async () => {
+    const when = new Date(Date.now() + 3000).toUTCString();
+    const { impl } = stubFetch([
+      rateLimited({ "retry-after": when }),
+      { status: 200, body: TOOL },
+    ]);
+    const { client, waits } = withSleep(impl);
+
+    await client.getTool("X");
+    // Second granularity in the header, so allow a wide band.
+    expect(waits[0]).toBeGreaterThan(1000);
+    expect(waits[0]).toBeLessThanOrEqual(4000);
+  });
+
+  it("backs off progressively when no Retry-After is given", async () => {
+    const { impl } = stubFetch([
+      rateLimited(),
+      rateLimited(),
+      { status: 200, body: TOOL },
+    ]);
+    const { client, waits } = withSleep(impl);
+
+    await client.getTool("X");
+    expect(waits).toHaveLength(2);
+    expect(waits[1]).toBeGreaterThan(waits[0]);
+  });
+
+  it("never waits longer than the cap, however large Retry-After is", async () => {
+    // A Worker cannot sit for a minute waiting; failing sooner beats being killed.
+    const { impl } = stubFetch([
+      rateLimited({ "retry-after": "600" }),
+      { status: 200, body: TOOL },
+    ]);
+    const { client, waits } = withSleep(impl);
+
+    await client.getTool("X");
+    expect(waits[0]).toBeLessThanOrEqual(10_000);
+  });
+
+  it("gives up after the retry budget and reports 429", async () => {
+    const { impl, calls } = stubFetch([
+      rateLimited(),
+      rateLimited(),
+      rateLimited(),
+      rateLimited(),
+    ]);
+    const { client } = withSleep(impl, 3);
+
+    const err = await client.getTool("X").catch((e) => e);
+    expect(calls).toHaveLength(4);
+    expect(err).toBeInstanceOf(ComposioApiError);
+    expect(err.status).toBe(429);
+  });
+
+  it("still refuses to retry an ordinary 4xx", async () => {
+    const { impl, calls } = stubFetch([
+      { status: 404, body: { error: { message: "nope", status: 404 } } },
+    ]);
+    const { client } = withSleep(impl);
+
+    await client.getTool("X").catch(() => undefined);
+    expect(calls).toHaveLength(1);
+  });
+});

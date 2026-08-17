@@ -357,9 +357,11 @@ describe("ComposioActionNode", () => {
     });
 
     it("reports an upstream 500 with its status and message", async () => {
-      // The client retries a 5xx once before giving up.
-      queueResponse(500, { error: { message: "internal error" } });
-      queueResponse(500, { error: { message: "internal error" } });
+      // Four attempts: the node asks for three retries so a rate-limited burst
+      // can ride out Composio's window, and 5xx shares that budget.
+      for (let i = 0; i < 4; i++) {
+        queueResponse(500, { error: { message: "internal error" } });
+      }
 
       const result = await createNode().execute(
         createContext({
@@ -371,7 +373,7 @@ describe("ComposioActionNode", () => {
       expect(result.status).toBe("error");
       expect(result.error).toContain("500");
       expect(result.error).toContain("internal error");
-      expect(calls).toHaveLength(2);
+      expect(calls).toHaveLength(4);
     });
 
     it("never throws when the transport itself fails", async () => {
@@ -402,5 +404,51 @@ describe("ComposioActionNode", () => {
       expect(result.error).toContain("Integration not found");
       expect(calls).toHaveLength(0);
     });
+  });
+});
+
+describe("ComposioActionNode rate limiting", () => {
+  it("rides out a 429 instead of failing the workflow", async () => {
+    // 429 was the largest single cause of failed runs: a burst of Notion
+    // comments trips Composio's limit and each one died on a condition that
+    // clears in seconds.
+    queueResponse(429, {
+      error: { message: "Too many requests. Try again shortly.", status: 429 },
+    });
+    queueResponse(200, {
+      data: { ok: true },
+      successful: true,
+      error: null,
+      log_id: "log_1",
+    });
+
+    const result = await createNode().execute(
+      createContext({
+        integrationId: "int_gmail",
+        toolSlug: "GMAIL_SEND_EMAIL",
+      })
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(result.status).toBe("completed");
+  });
+
+  it("gives up after the budget rather than hanging", async () => {
+    for (let i = 0; i < 4; i++) {
+      queueResponse(429, {
+        error: { message: "Too many requests.", status: 429 },
+      });
+    }
+
+    const result = await createNode().execute(
+      createContext({
+        integrationId: "int_gmail",
+        toolSlug: "GMAIL_SEND_EMAIL",
+      })
+    );
+
+    expect(calls).toHaveLength(4);
+    expect(result.status).toBe("error");
+    expect(result.error).toContain("429");
   });
 });

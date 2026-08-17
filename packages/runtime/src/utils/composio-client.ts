@@ -210,8 +210,10 @@ export interface ComposioClientOptions {
   baseUrl?: string;
   /** Injected in tests; defaults to the global fetch. */
   fetch?: typeof fetch;
-  /** Extra attempts after a 5xx. Default 1 — one retry, then fail. */
+  /** Extra attempts after a retryable failure. Default 1. */
   retries?: number;
+  /** Injected in tests so backoff does not cost real time. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface ListToolsOptions {
@@ -241,11 +243,42 @@ export interface ComposioExecuteResult {
   logId?: string;
 }
 
+/** Longest we will hold a request open; a Worker cannot sit out a full window. */
+const MAX_BACKOFF_MS = 10_000;
+
+/**
+ * How long to wait before retrying.
+ *
+ * Composio sends `Retry-After` on a 429, as either seconds or an HTTP date, and
+ * honouring it beats guessing. Without one, back off exponentially with jitter
+ * so a burst of comments hitting the limit together does not retry in lockstep
+ * and trip it again.
+ */
+export function backoffDelay(
+  attempt: number,
+  retryAfter: string | null
+): number {
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1000, MAX_BACKOFF_MS);
+    }
+    const at = Date.parse(retryAfter);
+    if (!Number.isNaN(at)) {
+      return Math.min(Math.max(at - Date.now(), 0), MAX_BACKOFF_MS);
+    }
+  }
+  const base = 500 * 2 ** attempt;
+  const jitter = base * 0.25 * Math.random();
+  return Math.min(base + jitter, MAX_BACKOFF_MS);
+}
+
 export class ComposioClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly retries: number;
+  private readonly sleep: (ms: number) => Promise<void>;
 
   /**
    * Remaining requests in the current rate-limit window, as reported by the
@@ -263,6 +296,9 @@ export class ComposioClient {
     // and bun tolerate it — so it fails only once deployed.
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.retries = options.retries ?? 1;
+    this.sleep =
+      options.sleep ??
+      ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   async listTools(
@@ -570,8 +606,19 @@ export class ComposioClient {
       }
 
       lastError = this.toApiError(text, response.status, path);
-      // 4xx is a decision, not a hiccup — retrying only wastes rate-limit budget.
-      if (response.status < 500) throw lastError;
+
+      // 429 is the one 4xx worth waiting out: it says "not now", not "no". It
+      // was the largest single cause of failed runs in production, because a
+      // burst of comments would trip Composio's limit and the whole workflow
+      // died on a condition that clears in seconds.
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable) throw lastError;
+
+      if (attempt < this.retries) {
+        await this.sleep(
+          backoffDelay(attempt, response.headers.get("retry-after"))
+        );
+      }
     }
 
     throw lastError ?? new ComposioApiError(`Request to ${path} failed`, 500);

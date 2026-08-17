@@ -162,18 +162,21 @@ export class ComposioActionNode extends ExecutableNode {
         return this.createErrorResult(mismatch);
       }
 
-      const result = await new ComposioClient({ apiKey }).executeTool(
-        toolSlug,
-        {
-          connectedAccountId,
-          userId: context.organizationId,
-          arguments: ComposioActionNode.collectArguments(
-            context.inputs,
-            explicitArguments
-          ),
-          version: toolVersion,
-        }
-      );
+      // Three attempts rather than the default one: a burst of comments trips
+      // Composio's rate limit together, and a 429 there clears in seconds. This
+      // is the path a user actually waits on, so it is worth the wait.
+      const result = await new ComposioClient({
+        apiKey,
+        retries: 3,
+      }).executeTool(toolSlug, {
+        connectedAccountId,
+        userId: context.organizationId,
+        arguments: ComposioActionNode.collectArguments(
+          context.inputs,
+          explicitArguments
+        ),
+        version: toolVersion,
+      });
 
       // A refused call is a 200 with `successful: false`, so this is a normal
       // outcome to report rather than an exception to raise.
