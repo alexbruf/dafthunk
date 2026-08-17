@@ -14,6 +14,9 @@ import {
 } from "../db";
 import { getProvider } from "../oauth";
 
+/** Provider name for Composio-brokered connections. */
+const COMPOSIO_PROVIDER = "composio";
+
 /**
  * Cloudflare-backed implementation of CredentialService.
  * Provides unified access to organization credentials (secrets and integrations).
@@ -170,6 +173,16 @@ export class CloudflareCredentialService implements CredentialService {
 
     const { provider, encryptedToken, encryptedRefreshToken, tokenExpiresAt } =
       integration;
+
+    // Composio connections have no OAuth of ours to refresh: the stored value
+    // is the Composio connected account id, not an access token, and Composio
+    // refreshes the upstream credential itself. There is no entry for it in the
+    // OAuth registry, and asking for one throws before anything else runs —
+    // which failed every Composio action node with an error about unknown
+    // providers rather than anything to do with the tool being called.
+    if (provider === COMPOSIO_PROVIDER) {
+      return this.decryptSecret(encryptedToken, this.organizationId);
+    }
 
     // Get provider instance
     const oauthProvider = getProvider(provider);

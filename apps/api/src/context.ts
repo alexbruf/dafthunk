@@ -45,6 +45,12 @@ export interface Bindings {
   CLOUDFLARE_ACCOUNT_ID: string;
   CLOUDFLARE_API_TOKEN: string;
   CLOUDFLARE_AI_GATEWAY_ID?: string;
+  // Cloudflare Access identity: the Zero Trust team domain (e.g.
+  // acme.cloudflareaccess.com) and the AUD tag of the Access application
+  // protecting this API. Optional at the type level only so unrelated test
+  // fixtures can skip them; the middleware fails closed when absent.
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   GOOGLE_CLIENT_ID?: string;
@@ -76,6 +82,8 @@ export interface Bindings {
   REPLICATE_API_TOKEN?: string;
   GOOGLE_API_KEY?: string;
   TAVILY_API_KEY?: string;
+  COMPOSIO_API_KEY?: string;
+  COMPOSIO_WEBHOOK_SECRET?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
   R2_BUCKET_NAME?: string;
@@ -105,6 +113,8 @@ export interface Variables {
   jwtPayload?: JWTTokenPayload;
   // Organization ID for the current request context
   organizationId?: string;
+  // Resolved user id (from accessIdentityMiddleware on /mcp, or jwtMiddleware elsewhere)
+  userId?: string;
 }
 
 // Type for Hono app context combining Env and Variables

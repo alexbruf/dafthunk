@@ -29,6 +29,11 @@ REPLICATE_API_TOKEN=CHANGE_ME
 # Tavily
 TAVILY_API_KEY=CHANGE_ME
 
+# Composio (project-scoped key; each Composio project issues its own)
+# The webhook secret is returned when the subscription is created, not chosen.
+COMPOSIO_API_KEY=CHANGE_ME
+COMPOSIO_WEBHOOK_SECRET=CHANGE_ME
+
 # Integration OAuth (workflow integrations)
 # Use separate OAuth apps from authentication for security isolation
 # Each integration requires different scopes and redirect URIs
@@ -69,3 +74,9 @@ TWILIO_PHONE_NUMBER=CHANGE_ME
 # Cloudflare Email Service
 # Must be an address on a domain configured in Cloudflare Email Sending
 SEND_EMAIL_FROM=noreply@mail.dafthunk.com
+
+# Cloudflare Access identity (OAuth protection for the MCP / machine API surface)
+# Team domain from Zero Trust (e.g. my-team.cloudflareaccess.com) and the AUD
+# tag of the Access application protecting this API (UUID from the Access app).
+ACCESS_TEAM_DOMAIN=CHANGE_ME.cloudflareaccess.com
+ACCESS_AUD=CHANGE_ME

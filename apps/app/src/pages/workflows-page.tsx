@@ -17,6 +17,7 @@ import MessageCircle from "lucide-react/icons/message-circle";
 import MessageSquare from "lucide-react/icons/message-square";
 import MoreHorizontal from "lucide-react/icons/more-horizontal";
 import Play from "lucide-react/icons/play";
+import Plug from "lucide-react/icons/plug";
 import PlusCircle from "lucide-react/icons/plus-circle";
 import Send from "lucide-react/icons/send";
 import Sparkles from "lucide-react/icons/sparkles";
@@ -82,6 +83,7 @@ const triggerMeta: Record<
   telegram_event: { label: "Telegram Event", icon: Send },
   whatsapp_event: { label: "WhatsApp Event", icon: MessageCircle },
   slack_event: { label: "Slack Event", icon: Hash },
+  composio_event: { label: "Composio Event", icon: Plug },
 };
 
 function highlightMatch(text: string, searchTerm: string) {

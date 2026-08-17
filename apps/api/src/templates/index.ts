@@ -2,6 +2,7 @@ import type { WorkflowTemplate } from "@dafthunk/types";
 
 import { shape3dTemplate } from "./3d-shape";
 import { aiCalculatorTemplate } from "./ai-calculator";
+import { composioGithubIssueTemplate } from "./composio-github-issue";
 import { conditionalBranchingTemplate } from "./conditional-branching";
 import { discordBotTemplate } from "./discord-bot";
 import { emailReplyTemplate } from "./email-reply";
@@ -40,6 +41,7 @@ export const workflowTemplates: WorkflowTemplate[] = [
   aiCalculatorTemplate,
   outlineAndWriteTemplate,
   conditionalBranchingTemplate,
+  composioGithubIssueTemplate,
   supportRoutingTemplate,
   parallelArticleCardTemplate,
   wikiResearchAgentTemplate,

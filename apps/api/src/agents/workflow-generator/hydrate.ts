@@ -53,6 +53,12 @@ const TRIGGER_ALIASES: Record<string, WorkflowTrigger> = {
   whatsapp: "whatsapp_event",
   slack: "slack_event",
   none: "manual",
+  // Composio is deliberately absent. Every Composio trigger is one of 362
+  // synthesised palette entries pinning a specific `triggerSlug`; the generator
+  // works from runtime node types and has no way to choose or pin one, so it
+  // would emit a workflow with an unpinned trigger that subscribes to nothing
+  // and silently never fires. Teaching the generator about slugs is the
+  // prerequisite for adding it here.
 };
 
 export function normalizeTrigger(raw: string): WorkflowTrigger | undefined {
