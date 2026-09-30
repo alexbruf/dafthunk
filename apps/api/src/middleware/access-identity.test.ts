@@ -168,9 +168,13 @@ function makeApp(
     ...overrides,
   });
 
+  // Reads the context variables a real route reads. `userId` comes from the
+  // context, not from `jwtPayload.sub`: the /mcp route gates on `c.get("userId")`,
+  // so asserting the payload instead would pass while production 401s.
   const handle = (c: Context<ApiContext>) =>
     c.json({
-      userId: c.get("jwtPayload")?.sub,
+      userId: c.get("userId"),
+      payloadSub: c.get("jwtPayload")?.sub,
       organizationId: c.get("organizationId"),
     });
 
@@ -385,6 +389,42 @@ describe("accessIdentityMiddleware — happy path", () => {
     expect(queries).toEqual(["users", "memberships"]);
     const cached = await bindings.KV.get(ACCESS_JWKS_KV_KEY, "json");
     expect(cached).not.toBeNull();
+  });
+
+  // The /mcp handler refuses the request unless BOTH context variables are
+  // present, so the mount that serves MCP is asserted on its own.
+  it("sets userId on the /mcp mount, which the route gates on", async () => {
+    const { app, bindings } = makeApp({
+      db: makeFakeDb({
+        users: [
+          {
+            id: "user-1",
+            name: "Ada",
+            email: "ada@example.com",
+            role: "user",
+            developerMode: false,
+            avatarUrl: null,
+          },
+        ],
+        memberships: [
+          { organizationId: "org-1", name: "Org One", role: "owner" },
+        ],
+      }),
+    });
+
+    const token = await mintAssertion({ email: "ada@example.com" });
+    const res = await post(app, bindings, "/mcp", token);
+    const body = (await res.json()) as {
+      userId?: string;
+      payloadSub?: string;
+      organizationId?: string;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.userId).toBe("user-1");
+    expect(body.organizationId).toBe("org-1");
+    // Same id through both paths: the route may read either without diverging.
+    expect(body.payloadSub).toBe(body.userId);
   });
 
   it("reuses the cached JWKS instead of refetching on the next request", async () => {

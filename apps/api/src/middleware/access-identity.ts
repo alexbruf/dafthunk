@@ -357,6 +357,11 @@ export function createAccessIdentityMiddleware(
 
     c.set("jwtPayload", identity);
     c.set("organizationId", resolved.organizationId);
+    // The /mcp route gates on `userId` from the context, and nothing else in
+    // the app sets it. Without this the route 401s every authenticated request
+    // while the assertion itself verified fine — a silent failure, because the
+    // rejection never reaches the logging above.
+    c.set("userId", user.id);
     await next();
   };
 }
