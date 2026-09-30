@@ -213,6 +213,7 @@ export interface NodeEnv {
   REPLICATE_API_TOKEN?: string;
   GOOGLE_API_KEY?: string;
   TAVILY_API_KEY?: string;
+  COMPOSIO_API_KEY?: string;
   WEB_HOST?: string;
   FORM_SIGNING_KEY?: string;
 }

@@ -47,11 +47,43 @@ async function connect(
   return { socket, frames };
 }
 
-/** Frames arrive asynchronously; give the event loop a few turns to deliver. */
+/**
+ * Waits until the socket has delivered whatever the assertion needs.
+ *
+ * Frames arrive asynchronously, and a fixed pause is the wrong tool: it passed
+ * when this file ran alone and failed when the four workspace suites ran in
+ * parallel, because the delivery just missed the deadline under CPU contention.
+ * That reads as a product bug and costs a re-run to classify, so poll for the
+ * condition instead and let the deadline be generous.
+ *
+ * On timeout this returns rather than throwing, so the assertion that follows
+ * reports the actual state — a useful diff beats "settleUntil timed out".
+ */
+async function settleUntil(
+  predicate: () => boolean,
+  timeoutMs = 3000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    // Drain microtasks first: most frames are already queued and this avoids
+    // paying the polling interval in the common case.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    if (predicate()) return;
+    await scheduler.wait(10);
+  } while (Date.now() < deadline);
+}
+
+/** Settles the event loop where there is no positive condition to wait on. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 10; i++) await Promise.resolve();
   await scheduler.wait(50);
 }
+
+const hasError = (frames: GeneratorServerMessage[]): boolean =>
+  frames.some((f) => f.type === "error");
+
+const errorCount = (frames: GeneratorServerMessage[]): number =>
+  frames.filter((f) => f.type === "error").length;
 
 describe("WorkflowGeneratorAgent", () => {
   it("sends a session frame on connect", async () => {
@@ -60,7 +92,7 @@ describe("WorkflowGeneratorAgent", () => {
       "X-Organization-Id": "org-1",
     });
 
-    await settle();
+    await settleUntil(() => frames.length > 0);
 
     expect(frames[0]).toMatchObject({
       type: "session",
@@ -80,13 +112,13 @@ describe("WorkflowGeneratorAgent", () => {
       closeCode = event.code;
     });
 
-    await settle();
+    await settleUntil(() => closeCode !== undefined);
 
     expect(closeCode).toBe(1008);
   });
 
   it("rejects a malformed client message", async () => {
-    const { socket } = await connect("test-session-malformed", {
+    const { socket, frames } = await connect("test-session-malformed", {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-1",
     });
@@ -96,9 +128,9 @@ describe("WorkflowGeneratorAgent", () => {
       closeCode = event.code;
     });
 
-    await settle();
+    await settleUntil(() => frames.length > 0);
     socket.send("not json");
-    await settle();
+    await settleUntil(() => closeCode !== undefined);
 
     expect(closeCode).toBe(1003);
   });
@@ -112,9 +144,9 @@ describe("WorkflowGeneratorAgent", () => {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-missing",
     });
-    await settle();
+    await settleUntil(() => first.frames.length > 0);
     first.socket.send(JSON.stringify({ type: "start", prompt: "summarize" }));
-    await settle();
+    await settleUntil(() => hasError(first.frames));
 
     const errorFrame = first.frames.find((f) => f.type === "error");
     expect(errorFrame).toBeDefined();
@@ -124,7 +156,7 @@ describe("WorkflowGeneratorAgent", () => {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-missing",
     });
-    await settle();
+    await settleUntil(() => hasError(second.frames));
 
     // Fresh session frame, then the replayed log including the error.
     expect(second.frames.some((f) => f.type === "error")).toBe(true);
@@ -138,11 +170,11 @@ describe("WorkflowGeneratorAgent", () => {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-missing",
     });
-    await settle();
+    await settleUntil(() => first.frames.length > 0);
     first.socket.send(
       JSON.stringify({ type: "start", prompt: "summarize my emails" })
     );
-    await settle();
+    await settleUntil(() => hasError(first.frames));
     first.socket.close();
 
     // A fresh connection is what resuming from a URL looks like.
@@ -150,7 +182,7 @@ describe("WorkflowGeneratorAgent", () => {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-missing",
     });
-    await settle();
+    await settleUntil(() => resumed.frames.length > 0);
 
     expect(resumed.frames[0]).toMatchObject({
       type: "session",
@@ -165,19 +197,20 @@ describe("WorkflowGeneratorAgent", () => {
       "X-User-Id": "user-1",
       "X-Organization-Id": "org-missing",
     });
-    await settle();
+    await settleUntil(() => first.frames.length > 0);
     first.socket.send(JSON.stringify({ type: "start", prompt: "summarize" }));
-    await settle();
-    const afterFirst = first.frames.filter((f) => f.type === "error").length;
+    await settleUntil(() => hasError(first.frames));
+    const afterFirst = errorCount(first.frames);
 
     first.socket.send(JSON.stringify({ type: "start", prompt: "summarize" }));
+    // The replayed error may or may not add a frame; wait for the growth we
+    // expect, then fall through so the assertion below judges the real state.
+    await settleUntil(() => errorCount(first.frames) > afterFirst);
     await settle();
 
     // The second start replays rather than generating again, so the error is
     // re-sent from the log but no new run is claimed.
-    expect(
-      first.frames.filter((f) => f.type === "error").length
-    ).toBeGreaterThanOrEqual(afterFirst);
+    expect(errorCount(first.frames)).toBeGreaterThanOrEqual(afterFirst);
     expect(first.frames.filter((f) => f.type === "session")).toHaveLength(1);
   });
 });

@@ -52,6 +52,8 @@ import { CloudflareBrowserScreenshotNode } from "@dafthunk/runtime/nodes/browser
 import { CloudflareBrowserSnapshotNode } from "@dafthunk/runtime/nodes/browser/cloudflare-browser-snapshot-node";
 import { CloudflareGatewayModelNode } from "@dafthunk/runtime/nodes/cloudflare/cloudflare-gateway-model-node";
 import { CloudflareModelNode } from "@dafthunk/runtime/nodes/cloudflare/cloudflare-model-node";
+import { ComposioActionNode } from "@dafthunk/runtime/nodes/composio/composio-action-node";
+import { ReceiveComposioEventNode } from "@dafthunk/runtime/nodes/composio/receive-composio-event-node";
 import { CsvExtractColumnNode } from "@dafthunk/runtime/nodes/csv/csv-extract-column-node";
 import { CsvFilterRowsNode } from "@dafthunk/runtime/nodes/csv/csv-filter-rows-node";
 import { CsvParseNode } from "@dafthunk/runtime/nodes/csv/csv-parse-node";
@@ -492,6 +494,9 @@ export class CloudflareNodeRegistry extends BaseNodeRegistry<Bindings> {
       this.env.TWILIO_PHONE_NUMBER
     );
     const hasSendEmail = !!(this.env.SEND_EMAIL && this.env.SEND_EMAIL_FROM);
+    // Composio brokers every toolkit behind one project key, so a single
+    // flag gates both the action and trigger nodes.
+    const hasComposio = !!this.env.COMPOSIO_API_KEY;
     const hasGoogleMail = !!(
       this.env.INTEGRATION_GOOGLE_MAIL_CLIENT_ID &&
       this.env.INTEGRATION_GOOGLE_MAIL_CLIENT_SECRET
@@ -787,6 +792,11 @@ export class CloudflareNodeRegistry extends BaseNodeRegistry<Bindings> {
       this.registerImplementation(SendEmailNode);
       // Email coordination agent — sends + waits for replies via Durable Object
       this.registerImplementation(EmailAgentClaudeSonnet4Node);
+    }
+
+    if (hasComposio) {
+      this.registerImplementation(ComposioActionNode);
+      this.registerImplementation(ReceiveComposioEventNode);
     }
 
     if (hasGoogleMail) {

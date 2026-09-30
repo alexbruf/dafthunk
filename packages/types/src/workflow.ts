@@ -22,7 +22,8 @@ export type WorkflowTrigger =
   | "discord_event"
   | "telegram_event"
   | "whatsapp_event"
-  | "slack_event";
+  | "slack_event"
+  | "composio_event";
 
 /**
  * Workflow runtime modes
@@ -223,6 +224,10 @@ export type ParameterType =
   | {
       type: "integration";
       provider: string; // Integration provider name (e.g. "google-mail", "discord")
+      // Narrows the picker further for providers that are themselves multi-app.
+      // A Composio integration belongs to one toolkit (github, gmail, ...), so a
+      // Gmail action must not offer a Slack connection.
+      toolkit?: string;
       value?: string; // Integration ID reference
     }
   | {

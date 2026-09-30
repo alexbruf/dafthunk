@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/utils/utils";
 
+import { ComposioSearchDialog } from "./composio-search-dialog";
 import { ExecutionEmailDialog } from "./execution-email-dialog";
 import { HttpRequestConfigDialog } from "./http-request-config-dialog";
 import { UpgradeRequiredDialog } from "./upgrade-required-dialog";
@@ -235,6 +236,10 @@ export function WorkflowBuilder({
     );
   }, [nodes, nodeTypes]);
 
+  // The palette only carries a toolkit's important tools; everything Composio
+  // ships beyond that (and discoverable triggers) lives behind this search.
+  const [composioSearchOpen, setComposioSearchOpen] = useState(false);
+
   // Trigger change: confirmation dialog + node swap
   const [triggerConfirmOpen, setTriggerConfirmOpen] = useState(false);
   const pendingTriggerRef = useRef<WorkflowTrigger | null>(null);
@@ -301,6 +306,9 @@ export function WorkflowBuilder({
                 onNodeDragStop={onNodeDragStop}
                 onInit={setReactFlowInstance}
                 onAddNode={readOnly ? undefined : handleAddNode}
+                onSearchComposio={
+                  readOnly ? undefined : () => setComposioSearchOpen(true)
+                }
                 onAction={handleActionButtonClick}
                 workflowStatus={execution.workflowStatus}
                 workflowErrorMessage={execution.workflowErrorMessage}
@@ -379,6 +387,13 @@ export function WorkflowBuilder({
             templates={nodeTypes}
             workflowName={workflowName}
             workflowDescription={workflowDescription}
+            hasTriggerNode={hasTriggerNode}
+          />
+
+          <ComposioSearchDialog
+            open={readOnly ? false : composioSearchOpen}
+            onSelect={handleNodeSelect}
+            onClose={() => setComposioSearchOpen(false)}
             hasTriggerNode={hasTriggerNode}
           />
         </div>

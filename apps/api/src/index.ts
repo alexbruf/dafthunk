@@ -13,6 +13,9 @@ import billingRoutes from "./routes/billing";
 import botRoutes from "./routes/bots";
 import cloudflareAiRoutes from "./routes/cloudflare-ai";
 import cloudflareGatewayRoutes from "./routes/cloudflare-gateway";
+import composioRoutes from "./routes/composio";
+import composioConnect from "./routes/composio-connect";
+import composioWebhook from "./routes/composio-webhook";
 import dashboardRoutes from "./routes/dashboard";
 import databaseRoutes from "./routes/databases";
 import datasetRoutes from "./routes/datasets";
@@ -29,6 +32,7 @@ import httpTriggerRoutes from "./routes/http-triggers";
 import integrationRoutes from "./routes/integrations";
 import invitationRoutes from "./routes/invitations";
 import llmsRoutes from "./routes/llms";
+import mcpRoutes from "./routes/mcp";
 import oauthRoutes from "./routes/oauth";
 import objectRoutes from "./routes/objects";
 import organizationRoutes from "./routes/organizations";
@@ -103,6 +107,15 @@ app.route("/whatsapp", whatsappWebhook);
 // Slack webhook (no auth, verified by HMAC-SHA256 signature)
 app.route("/slack", slackWebhook);
 
+// Composio trigger deliveries (no auth, verified by HMAC-SHA256 signature)
+app.route("/composio", composioWebhook);
+
+// Composio connection flow (hosted auth link + callback)
+app.route("/composio", composioConnect);
+
+// Composio catalog browsing for the editor
+app.route("/composio", composioRoutes);
+
 // Trigger execution (API key auth, org derived from resource record)
 app.route("/http", httpTriggerRoutes);
 app.route("/queues", queuePublishRoutes);
@@ -120,6 +133,10 @@ app.route("/form-triggers", formTriggerRoutes);
 app.route("/feedback-forms", feedbackFormRoutes);
 app.route("/templates", templateRoutes);
 app.route("/types", typeRoutes);
+
+// MCP server (Streamable HTTP). Auth attaches inside routes/mcp.ts via
+// accessIdentityMiddleware (see the AUTH MOUNT POINT note there).
+app.route("/mcp", mcpRoutes);
 
 app.route("/:organizationId/api-keys", apiKeyRoutes);
 app.route("/:organizationId/billing", billingRoutes);

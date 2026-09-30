@@ -4,6 +4,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Bindings } from "../context";
 import { createDatabase, Database } from "../db";
 import {
+  deactivateComposioTrigger,
   deleteBotTrigger,
   deleteEmailTrigger,
   deleteQueueTrigger,
@@ -12,6 +13,7 @@ import {
   getBotTrigger,
   updateBotTriggerMetadataByBot,
   upsertBotTrigger,
+  upsertComposioTrigger,
   upsertEmailTrigger,
   upsertQueueTrigger,
   upsertScheduledTrigger,
@@ -19,6 +21,7 @@ import {
 import type { BotProviderType, WorkflowRow } from "../db/schema";
 import { memberships, organizations, workflows } from "../db/schema";
 import { decryptSecret } from "../utils/encryption";
+import { extractComposioTrigger } from "./composio-trigger-sync";
 
 /**
  * Data required to save a workflow record
@@ -592,6 +595,37 @@ export class WorkflowStore {
         } catch (_error) {
           // Ignore - trigger didn't exist
         }
+      }
+    }
+
+    // Handle Composio event workflows. The row is what the reconciler works
+    // from; nothing else creates the upstream subscription, so a workflow saved
+    // without one would silently never fire.
+    if (workflowType === "composio_event") {
+      const intent = extractComposioTrigger(nodes);
+      try {
+        if (intent) {
+          await upsertComposioTrigger(this.db, {
+            workflowId,
+            organizationId,
+            integrationId: intent.integrationId,
+            triggerSlug: intent.triggerSlug,
+            config: JSON.stringify(intent.config),
+            active: true,
+          });
+          console.log(
+            `Registered Composio trigger: workflow=${workflowId}, slug=${intent.triggerSlug}`
+          );
+        } else {
+          // Deactivated rather than deleted: the reconciler still needs the
+          // instance id to tear the subscription down upstream.
+          await deactivateComposioTrigger(this.db, workflowId);
+        }
+      } catch (error) {
+        console.error(
+          `Failed to sync Composio trigger for workflow ${workflowId}:`,
+          error instanceof Error ? error.message : String(error)
+        );
       }
     }
 

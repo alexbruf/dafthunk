@@ -22,8 +22,22 @@ import {
 } from "@/components/ui/select";
 
 import { useAvailableProviders } from "../hooks/use-available-providers";
+import { useComposioConnect } from "../hooks/use-composio-connect";
+import { useComposioToolkits } from "../hooks/use-composio-toolkits";
 import { useIntegrationActions } from "../hooks/use-integration-actions";
-import { getAvailableProviders, getProviderLabel } from "../providers";
+import {
+  getAvailableProviders,
+  getProvider,
+  getProviderLabel,
+} from "../providers";
+import { ComposioToolkitPicker } from "./composio-toolkit-picker";
+
+/**
+ * Composio is neither an OAuth provider nor an API-key one: the user picks a
+ * toolkit and Dafthunk hands them to Composio's hosted auth link, so this
+ * dialog needs a third branch rather than a new flag on `ProviderConfig`.
+ */
+const COMPOSIO_PROVIDER: IntegrationProvider = "composio";
 
 interface IntegrationDialogProps {
   open: boolean;
@@ -35,22 +49,42 @@ export function IntegrationDialog({
   onOpenChange,
 }: IntegrationDialogProps) {
   const { isProcessing, connectOAuth, createManual } = useIntegrationActions();
+  const { connectToolkit } = useComposioConnect();
   const { providers: availableProviderIds, isLoading: isLoadingProviders } =
     useAvailableProviders();
+  const {
+    toolkits,
+    isLoading: isLoadingToolkits,
+    error: toolkitsError,
+    isAvailable: isComposioAvailable,
+  } = useComposioToolkits(open);
 
   const [selectedProvider, setSelectedProvider] =
     useState<IntegrationProvider | null>(null);
   const [integrationName, setIntegrationName] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [composioToolkit, setComposioToolkit] = useState<string | null>(null);
 
   // Memoize providers list
-  const providers = useMemo(
-    () =>
+  const providers = useMemo(() => {
+    const configured =
       availableProviderIds && availableProviderIds.length > 0
         ? getAvailableProviders(availableProviderIds)
-        : [],
-    [availableProviderIds]
-  );
+        : [];
+
+    // `/integrations/providers` reports providers whose OAuth client
+    // credentials Dafthunk holds. Composio has none to hold — its own catalog
+    // endpoint answering is what proves it is configured.
+    const composio = getProvider(COMPOSIO_PROVIDER);
+    if (
+      !isComposioAvailable ||
+      !composio ||
+      configured.some((provider) => provider.id === COMPOSIO_PROVIDER)
+    ) {
+      return configured;
+    }
+    return [...configured, composio];
+  }, [availableProviderIds, isComposioAvailable]);
 
   // Memoize current provider
   const currentProvider = useMemo(
@@ -69,6 +103,7 @@ export function IntegrationDialog({
   const resetForm = () => {
     setIntegrationName("");
     setApiKey("");
+    setComposioToolkit(null);
     setSelectedProvider(providers.length > 0 ? providers[0].id : null);
   };
 
@@ -79,6 +114,13 @@ export function IntegrationDialog({
 
   const handleConnect = async () => {
     if (!currentProvider || !selectedProvider) return;
+
+    if (selectedProvider === COMPOSIO_PROVIDER) {
+      if (!composioToolkit) return;
+      connectToolkit(composioToolkit);
+      handleClose();
+      return;
+    }
 
     if (currentProvider.supportsOAuth) {
       connectOAuth(selectedProvider);
@@ -112,8 +154,11 @@ export function IntegrationDialog({
     );
     footer = <Button onClick={handleClose}>Close</Button>;
   } else {
+    const isComposio = selectedProvider === COMPOSIO_PROVIDER;
     const isOAuth = currentProvider?.supportsOAuth;
-    const canSubmit = isOAuth || (integrationName && apiKey);
+    const canSubmit = isComposio
+      ? Boolean(composioToolkit)
+      : isOAuth || Boolean(integrationName && apiKey);
 
     content = (
       <>
@@ -145,7 +190,20 @@ export function IntegrationDialog({
             </p>
           </div>
 
-          {!isOAuth && (
+          {isComposio && (
+            <div>
+              <Label>App</Label>
+              <ComposioToolkitPicker
+                toolkits={toolkits}
+                isLoading={isLoadingToolkits}
+                hasError={Boolean(toolkitsError)}
+                selectedSlug={composioToolkit}
+                onSelect={setComposioToolkit}
+              />
+            </div>
+          )}
+
+          {!isOAuth && !isComposio && (
             <>
               {currentProvider?.apiKeyInstructions && (
                 <div className="rounded-lg border bg-muted/50 p-3">
@@ -210,7 +268,7 @@ export function IntegrationDialog({
         <Button onClick={handleConnect} disabled={isProcessing || !canSubmit}>
           {isProcessing
             ? "Processing..."
-            : isOAuth
+            : isOAuth || isComposio
               ? "Connect"
               : "Add Integration"}
         </Button>
@@ -220,7 +278,11 @@ export function IntegrationDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      {/* The Composio branch adds a provider blurb, a search box and a list of
+          ~1,000 toolkits, which together outgrow the viewport. shadcn's
+          DialogContent sets no height bound, so without this the dialog runs
+          off the screen instead of scrolling. */}
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add Integration</DialogTitle>
           {content}

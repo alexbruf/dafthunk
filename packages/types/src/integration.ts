@@ -11,7 +11,8 @@ export type IntegrationProvider =
   | "linkedin"
   | "github"
   | "x"
-  | "wordpress";
+  | "wordpress"
+  | "composio";
 
 // Integration status types
 export type IntegrationStatus = "active" | "expired" | "revoked";

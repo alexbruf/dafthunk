@@ -119,6 +119,8 @@
     "WEBSITE_URL": "https://www.dafthunk.com",
     "CLOUDFLARE_ENV": "test",
     "CLOUDFLARE_ACCOUNT_ID": "test-account-id",
-    "CLOUDFLARE_API_TOKEN": "test-api-token"
+    "CLOUDFLARE_API_TOKEN": "test-api-token",
+    "ACCESS_TEAM_DOMAIN": "dafthunk-test.cloudflareaccess.com",
+    "ACCESS_AUD": "test-access-app-aud"
   }
 }

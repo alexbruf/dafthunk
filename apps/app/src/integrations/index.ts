@@ -9,6 +9,9 @@ export { IntegrationDialog } from "./components/integration-dialog";
 export { IntegrationList } from "./components/integration-list";
 // Hooks
 export { useAvailableProviders } from "./hooks/use-available-providers";
+export { useComposioConnect } from "./hooks/use-composio-connect";
+export type { ComposioToolkit } from "./hooks/use-composio-toolkits";
+export { useComposioToolkits } from "./hooks/use-composio-toolkits";
 export { useIntegrationActions } from "./hooks/use-integration-actions";
 export { useIntegrations } from "./hooks/use-integrations";
 export { useOAuthCallback } from "./hooks/use-oauth-callback";

@@ -15,6 +15,12 @@ const ERROR_MESSAGES: Record<string, string> = {
   expired_state: "OAuth session expired",
   not_authenticated: "Please log in first",
   organization_mismatch: "Organization mismatch",
+  // Composio's hosted auth link redirects back through the same
+  // `?success=`/`?error=` contract as the OAuth providers.
+  composio_not_configured: "Composio is not configured on this deployment",
+  composio_auth_failed: "The app did not authorize the connection",
+  composio_invalid_callback: "Composio returned an unusable connection",
+  composio_link_failed: "Could not start the Composio connection",
 };
 
 /**

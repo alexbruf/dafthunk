@@ -1,6 +1,7 @@
 import type { IntegrationProvider } from "@dafthunk/types";
 
 import type { ProviderConfig } from "../types";
+import { composioProvider } from "./composio";
 import { discordProvider } from "./discord";
 import { githubProvider } from "./github";
 import { googleCalendarProvider } from "./google-calendar";
@@ -23,6 +24,7 @@ export const PROVIDER_REGISTRY: Record<IntegrationProvider, ProviderConfig> = {
   github: githubProvider,
   x: xProvider,
   wordpress: wordpressProvider,
+  composio: composioProvider,
 };
 
 /**

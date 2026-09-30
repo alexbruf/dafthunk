@@ -52,6 +52,7 @@ export const WorkflowTriggerType = {
   TELEGRAM_EVENT: "telegram_event",
   WHATSAPP_EVENT: "whatsapp_event",
   SLACK_EVENT: "slack_event",
+  COMPOSIO_EVENT: "composio_event",
 } as const;
 
 export type WorkflowTriggerTypeType =
@@ -86,6 +87,7 @@ export const IntegrationProvider = {
   LINKEDIN: "linkedin",
   X: "x",
   WORDPRESS: "wordpress",
+  COMPOSIO: "composio",
 } as const;
 
 export type IntegrationProviderType =
@@ -731,6 +733,48 @@ export const botTriggers = sqliteTable(
   ]
 );
 
+// Composio Triggers - one subscribed Composio trigger instance per workflow.
+// Shaped like bot_triggers (workflow-keyed, org-scoped, soft-disabled) because
+// it plays the same role: the join from an inbound delivery to the workflow it
+// should run. `instanceId` is the routing key carried on every V3 delivery.
+export const composioTriggers = sqliteTable(
+  "composio_triggers",
+  {
+    workflowId: text("workflow_id")
+      .primaryKey()
+      .references(() => workflows.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    // The Dafthunk integration holding the Composio connected account id.
+    integrationId: text("integration_id").references(() => integrations.id, {
+      onDelete: "set null",
+    }),
+    // e.g. "GITHUB_STAR_ADDED"
+    triggerSlug: text("trigger_slug").notNull(),
+    // Composio's trigger instance nano id. Null until the reconciler has
+    // created the subscription upstream; that gap is what makes reconciliation
+    // rather than fire-and-forget necessary.
+    instanceId: text("instance_id"),
+    config: text("config"), // JSON, validated against the trigger type's config schema
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    createdAt: createCreatedAt(),
+    updatedAt: createUpdatedAt(),
+  },
+  (table) => [
+    // Every inbound delivery is a lookup on this column, so it must be unique:
+    // two workflows sharing an instance id would double-run one upstream event.
+    uniqueIndex("composio_triggers_instance_id_unique_idx").on(
+      table.instanceId
+    ),
+    index("composio_triggers_organization_id_idx").on(table.organizationId),
+    index("composio_triggers_integration_id_idx").on(table.integrationId),
+    index("composio_triggers_trigger_slug_idx").on(table.triggerSlug),
+    index("composio_triggers_active_idx").on(table.active),
+    index("composio_triggers_updated_at_idx").on(table.updatedAt),
+  ]
+);
+
 // Secrets - Encrypted secrets associated with organizations
 export const secrets = sqliteTable(
   "secrets",
@@ -1052,6 +1096,24 @@ export const botsRelations = relations(bots, ({ one, many }) => ({
   }),
   botTriggers: many(botTriggers),
 }));
+
+export const composioTriggersRelations = relations(
+  composioTriggers,
+  ({ one }) => ({
+    workflow: one(workflows, {
+      fields: [composioTriggers.workflowId],
+      references: [workflows.id],
+    }),
+    organization: one(organizations, {
+      fields: [composioTriggers.organizationId],
+      references: [organizations.id],
+    }),
+    integration: one(integrations, {
+      fields: [composioTriggers.integrationId],
+      references: [integrations.id],
+    }),
+  })
+);
 
 export const botTriggersRelations = relations(botTriggers, ({ one }) => ({
   workflow: one(workflows, {
